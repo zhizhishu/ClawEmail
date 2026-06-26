@@ -7,6 +7,7 @@ data/
 npm-debug.log*
 # 项目私货(本地保留,不进公开仓库)
 _archive/
+archive/
 PROJECT_ID.md
 PROJECT_CONTEXT.md
 AGENTS.md

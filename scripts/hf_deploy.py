@@ -25,6 +25,8 @@ IGNORE = [
     # project memory / local notes / archives — local only, never deploy
     "LOG.md", "TASK.md", "TASK_LOG.md", "PROJECT_ID.md", "PROJECT_CONTEXT.md",
     "PROJECT_MAP.md", "AGENTS.md", "_archive/*", ".project/*",
+    # local-only secrets / backups — NEVER deploy to the public Space
+    "archive/*", "*.secret.md", "*/*.secret.md",
 ]
 
 
@@ -60,7 +62,7 @@ def main() -> int:
         repo_type=REPO_TYPE,
         folder_path=root,
         ignore_patterns=IGNORE,
-        commit_message="feat(ext): parsed_mails list now returns full text+html (canonical), not preview — cf zero-extra-fetch, php per-message; ExtMail gains html field",
+        commit_message="feat(web): mailbox view = top-right category selector + per-category body (Claw / temp providers), sidebar generalized to per-provider groups (new ProviderManageCard); README refreshed",
     )
     print(f"uploaded: {getattr(commit, 'oid', commit)}")
 

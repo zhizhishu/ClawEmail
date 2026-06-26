@@ -9,7 +9,7 @@ import { SettingsView } from "./components/SettingsView";
 import { AiBubble } from "./components/AiBubble";
 import { DocsModal } from "./components/DocsModal";
 import { SentView } from "./components/SentView";
-import { TempSourcesCard } from "./components/TempSourcesCard";
+import { ProviderManageCard } from "./components/ProviderManageCard";
 import { useResizableWidth } from "./hooks";
 import { PrefsBar, usePrefs } from "./i18n";
 import {
@@ -110,13 +110,14 @@ export function App() {
   const [clawBusy, setClawBusy] = useState(false);
   const [connectionDetailsOpen, setConnectionDetailsOpen] = useState(false);
   const [connCardOpen, setConnCardOpen] = useState(false);
-  const [cfAliases, setCfAliases] = useState<CfAlias[]>([]);
+  const [cfAliasesByProvider, setCfAliasesByProvider] = useState<Record<string, CfAlias[]>>({});
   const [tempProviders, setTempProviders] = useState<TempProviderPublic[]>([]);
   const [cfProvider, setCfProvider] = useState<string | undefined>(undefined);
   const [cfFocusAlias, setCfFocusAlias] = useState<string | undefined>(undefined);
   const [clawGroupOpen, setClawGroupOpen] = useState(true);
-  const [eduGroupOpen, setEduGroupOpen] = useState(true);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [mailboxQuery, setMailboxQuery] = useState("");
+  const [mailboxCat, setMailboxCat] = useState<string>("claw");
 
   const [listenerItems, setListenerItems] = useState<ListenerSnapshot[]>([]);
   const [listenerBusy, setListenerBusy] = useState(false);
@@ -230,9 +231,25 @@ export function App() {
     setAdminPassword(password);
     loadClawAuthStatus().catch(reportError);
     loadMailboxes().catch(reportError);
-    fetchCfAliases().then(setCfAliases).catch(() => setCfAliases([]));
     fetchCfProviders().then(setTempProviders).catch(() => setTempProviders([]));
   }, [password]);
+
+  // load each temp source's aliases into a per-provider map (for the sidebar groups)
+  useEffect(() => {
+    let alive = true;
+    Promise.all(
+      tempProviders.map((p) =>
+        fetchCfAliases(p.id)
+          .then((a) => [p.id, a] as const)
+          .catch(() => [p.id, [] as CfAlias[]] as const)
+      )
+    ).then((entries) => {
+      if (alive) setCfAliasesByProvider(Object.fromEntries(entries));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [tempProviders]);
 
   useEffect(() => {
     if (!status) return;
@@ -312,6 +329,18 @@ export function App() {
     }
   }
 
+  function reloadCfAliases() {
+    Promise.all(
+      tempProviders.map((p) =>
+        fetchCfAliases(p.id)
+          .then((a) => [p.id, a] as const)
+          .catch(() => [p.id, [] as CfAlias[]] as const)
+      )
+    )
+      .then((entries) => setCfAliasesByProvider(Object.fromEntries(entries)))
+      .catch(() => {});
+  }
+
   async function handleAddTempProvider(input: {
     name: string;
     type: "php" | "cf";
@@ -324,6 +353,8 @@ export function App() {
       const created = await addCfProvider(input);
       setStatus(lang === "zh" ? `已添加临时邮箱源 ${created.name}` : `added temp source ${created.name}`);
       setTempProviders(await fetchCfProviders());
+      setMailboxCat(created.id);
+      reloadCfAliases();
     } catch (err) {
       reportError(err);
     }
@@ -699,7 +730,7 @@ export function App() {
             <span>{lang === "zh" ? "设置" : "Settings"}</span>
             <span className="count">{tempProviders.length || ""}</span>
           </button>
-          {(activeMailboxes.length > 0 || cfAliases.length > 0) && (
+          {(activeMailboxes.length > 0 || tempProviders.length > 0) && (
             <div className="nav-mailboxes">
               <input
                 className="nav-mb-search"
@@ -710,7 +741,6 @@ export function App() {
               {(() => {
                 const q = mailboxQuery.trim();
                 const claws = activeMailboxes.filter((m) => m.email.split("@")[0].toLowerCase().includes(q));
-                const edus = cfAliases.filter((a) => a.local.toLowerCase().includes(q));
                 return (
                   <>
                     {claws.length > 0 && (
@@ -733,26 +763,36 @@ export function App() {
                         ))}
                       </div>
                     )}
-                    {edus.length > 0 && (
-                      <div className="nav-group">
-                        <button className="nav-group-head" type="button" onClick={() => setEduGroupOpen((o) => !o)}>
-                          <span className="nav-group-chevron">{eduGroupOpen ? "▾" : "▸"}</span>
-                          <span className="nav-group-name">edu</span>
-                          <span className="nav-group-count">{edus.length}</span>
-                        </button>
-                        {eduGroupOpen && edus.map((alias) => (
+                    {tempProviders.map((p) => {
+                      const aliases = (cfAliasesByProvider[p.id] ?? []).filter((a) => a.local.toLowerCase().includes(q));
+                      if (q && aliases.length === 0) return null;
+                      const open = openGroups[p.id] ?? true;
+                      return (
+                        <div className="nav-group" key={p.id}>
                           <button
-                            key={alias.local}
-                            className={`nav-sub ${view === "cf" && cfFocusAlias === alias.local ? "active" : ""}`}
-                            onClick={() => { setCfFocusAlias(alias.local); setView("cf"); }}
-                            title={alias.address}
+                            className="nav-group-head"
+                            type="button"
+                            onClick={() => setOpenGroups((g) => ({ ...g, [p.id]: !(g[p.id] ?? true) }))}
                           >
-                            <span className="nav-sub-dot edu" />
-                            <span className="nav-sub-name">{alias.local}</span>
+                            <span className="nav-group-chevron">{open ? "▾" : "▸"}</span>
+                            <span className="nav-group-name">{p.name}</span>
+                            <span className="nav-group-count">{aliases.length}</span>
                           </button>
-                        ))}
-                      </div>
-                    )}
+                          {open &&
+                            aliases.map((alias) => (
+                              <button
+                                key={alias.local}
+                                className={`nav-sub ${view === "cf" && cfProvider === p.id && cfFocusAlias === alias.local ? "active" : ""}`}
+                                onClick={() => { setCfProvider(p.id); setCfFocusAlias(alias.local); setView("cf"); }}
+                                title={alias.address}
+                              >
+                                <span className="nav-sub-dot edu" />
+                                <span className="nav-sub-name">{alias.local}</span>
+                              </button>
+                            ))}
+                        </div>
+                      );
+                    })}
                   </>
                 );
               })()}
@@ -893,7 +933,7 @@ export function App() {
             <p className="subtitle">{meta.subtitle}</p>
           </div>
           <div className="actions">
-            {(view === "sent" || view === "mailboxes") && (
+            {view === "sent" && (
               <select
                 value={selectedMailbox}
                 onChange={(event) => setSelectedMailbox(event.target.value)}
@@ -905,6 +945,20 @@ export function App() {
               </select>
             )}
             {view === "mailboxes" && (
+              <select
+                className="cat-select"
+                value={mailboxCat}
+                onChange={(event) => setMailboxCat(event.target.value)}
+                title={lang === "zh" ? "邮箱大类目" : "Mailbox category"}
+              >
+                <option value="claw">Claw · {clawAuth?.domain ?? "claw.163.com"}</option>
+                {tempProviders.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}{p.domain ? ` · ${p.domain}` : ""}</option>
+                ))}
+                <option value="__add__">{lang === "zh" ? "＋ 添加源" : "+ Add source"}</option>
+              </select>
+            )}
+            {view === "mailboxes" && mailboxCat === "claw" && (
               <button
                 className={`sync-btn ${mailboxSyncBusy ? "syncing" : ""}`}
                 onClick={handleSyncMailboxes}
@@ -928,7 +982,7 @@ export function App() {
           </div>
         )}
 
-        {view === "mailboxes" && (
+        {view === "mailboxes" && mailboxCat === "claw" && (
           <MailboxesView
             mailboxes={activeMailboxes}
             clawAuth={clawAuth}
@@ -944,17 +998,18 @@ export function App() {
           />
         )}
 
-        {view === "mailboxes" && (
-          <div className="settings-view" style={{ marginTop: 18 }}>
-            <TempSourcesCard
-              tempProviders={tempProviders}
-              onAddTempProvider={handleAddTempProvider}
-              onUpdateTempProvider={handleUpdateTempProvider}
-              onDeleteTempProvider={handleDeleteTempProvider}
-              onOpenTempProvider={(id) => { setCfProvider(id); setView("cf"); }}
-              onError={reportError}
-            />
-          </div>
+        {view === "mailboxes" && mailboxCat !== "claw" && (
+          <ProviderManageCard
+            provider={mailboxCat === "__add__" ? undefined : tempProviders.find((p) => p.id === mailboxCat)}
+            onAdd={handleAddTempProvider}
+            onUpdate={handleUpdateTempProvider}
+            onDelete={(id) => { handleDeleteTempProvider(id); setMailboxCat("claw"); }}
+            onOpenInbox={(local) => { setCfProvider(mailboxCat); setCfFocusAlias(local); setView("cf"); }}
+            onOpenSource={() => { setCfProvider(mailboxCat); setCfFocusAlias(undefined); setView("cf"); }}
+            onError={reportError}
+            onStatus={setStatus}
+            onAliasesChanged={reloadCfAliases}
+          />
         )}
 
         {view === "inbox" && (

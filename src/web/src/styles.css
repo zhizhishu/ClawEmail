@@ -1254,6 +1254,13 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .mb-row .ops { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .mb-row .ops button { font-size: 11.5px; padding: 5px 10px; }
 
+/* ---------- Provider (mailbox category) management ---------- */
+.cat-select { font-weight: 500; }
+.prov-manage .settings-head { align-items: center; gap: 12px; }
+.prov-id { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; flex-wrap: wrap; }
+.prov-ops { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.prov-ops button { font-size: 11.5px; padding: 5px 11px; }
+
 .empty-state {
   padding: 40px 24px;
   text-align: center;
