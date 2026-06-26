@@ -62,7 +62,7 @@ def main() -> int:
         repo_type=REPO_TYPE,
         folder_path=root,
         ignore_patterns=IGNORE,
-        commit_message="feat(web): mailbox view = top-right category selector + per-category body (Claw / temp providers), sidebar generalized to per-provider groups (new ProviderManageCard); README refreshed",
+        commit_message="fix(cf): list ALL aliases from canonical /admin/address (paginated + dedup) instead of only panel-local bookkeeping — temp sources now show every server-side address",
     )
     print(f"uploaded: {getattr(commit, 'oid', commit)}")
 

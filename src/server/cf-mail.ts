@@ -5,8 +5,8 @@
 //       读信:    GET  /api/parsed_mails?limit=&offset= (头 Authorization: Bearer <该址 jwt>) → {results, count}
 //                解析字段 = {id, message_id, source, address, sender, subject, text, html, created_at, attachments}
 //       发信:    POST /admin/send_mail (头 x-admin-auth) {from_mail, to_mail, subject, content, is_html} → {status:"ok"}
-//       —— admin 无轻量「全量列地址」口子 → 列表走面板本地记账(app_settings cf.addresses.<id>)；
-//          读某址先 mint 一把该址 jwt 再读 /api/parsed_mails。
+//       列地址:  GET /admin/address?limit=&offset= (头 x-admin-auth) → {results:[{name,address,created_at,...}],count} 全量分页；
+//          不可用(非 canonical)才退回面板本地记账(app_settings cf.addresses.<id>)。读某址先 mint 一把该址 jwt 再读 /api/parsed_mails。
 //          ⚠ cfMint 依赖 new_address 同名幂等刷 jwt；真 canonical admin/new_address 对已存在地址可能非幂等，
 //            待 roastalpha-cf 上线后改走 /admin/show_password/:id 或 /admin/mails?address= 实测校准。
 import type { TempProvider } from "./temp-providers";
@@ -130,9 +130,41 @@ export async function cfStatus(provider: TempProvider): Promise<any> {
   return phpApi(provider, "external_status");
 }
 
+// canonical cf：GET /admin/address 全量列地址（分页拉完），不再只靠面板本地记账。
+async function cfAdminList(provider: TempProvider): Promise<CfAlias[]> {
+  const base = provider.endpoint.replace(/\/+$/, "");
+  const out: CfAlias[] = [];
+  const seen = new Set<string>();
+  const limit = 100;
+  for (let page = 0, offset = 0; page < 100; page++, offset += limit) {
+    const res = await fetch(`${base}/admin/address?limit=${limit}&offset=${offset}`, {
+      headers: { "x-admin-auth": provider.password }
+    });
+    if (!res.ok) throw new Error(`cf admin/address HTTP ${res.status}`);
+    const text = await res.text();
+    let j: any = null;
+    try { j = JSON.parse(text); } catch { /* */ }
+    const results: any[] = Array.isArray(j?.results) ? j.results : [];
+    for (const r of results) {
+      const address = String(r.address || r.name || "");
+      if (!address || seen.has(address)) continue; // 按完整地址去重
+      seen.add(address);
+      // local = 服务器认的地址名（new_address 的 name）；缺则取地址本地部分
+      out.push({ address, local: String(r.name ?? localOf(address)), createdAt: r.created_at ?? null });
+    }
+    if (results.length < limit) break;
+  }
+  return out;
+}
+
 export async function cfListAliases(provider: TempProvider): Promise<CfAlias[]> {
   if (provider.type === "cf") {
-    return cfNames(provider).map((n) => ({ address: fullAddr(provider, n), local: n, createdAt: null }));
+    // canonical /admin/address 是权威源，全量列；不可用才退回面板本地记账
+    try {
+      return await cfAdminList(provider);
+    } catch {
+      return cfNames(provider).map((n) => ({ address: fullAddr(provider, n), local: n, createdAt: null }));
+    }
   }
   const data = await phpApi<{ aliases?: CfAlias[] }>(provider, "external_aliases");
   return data.aliases ?? [];
