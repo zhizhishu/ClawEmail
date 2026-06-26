@@ -62,7 +62,7 @@ def main() -> int:
         repo_type=REPO_TYPE,
         folder_path=root,
         ignore_patterns=IGNORE,
-        commit_message="fix(cf): list ALL aliases from canonical /admin/address (paginated + dedup) instead of only panel-local bookkeeping — temp sources now show every server-side address",
+        commit_message="fix(cf): filter /admin/address aliases by provider domain — hide stale entries from old/other domains (e.g. legacy wahah.xyz) so each category shows only its own domain",
     )
     print(f"uploaded: {getattr(commit, 'oid', commit)}")
 

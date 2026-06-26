@@ -147,7 +147,10 @@ async function cfAdminList(provider: TempProvider): Promise<CfAlias[]> {
     const results: any[] = Array.isArray(j?.results) ? j.results : [];
     for (const r of results) {
       const address = String(r.address || r.name || "");
-      if (!address || seen.has(address)) continue; // 按完整地址去重
+      if (!address) continue;
+      // 只列与本源域名一致的地址：服务器地址库可能残留旧/其它域名条目（如换域名前的 wahah.xyz），按 provider.domain 过滤掉
+      if (provider.domain && (address.split("@")[1] || "").toLowerCase() !== provider.domain.toLowerCase()) continue;
+      if (seen.has(address)) continue; // 按完整地址去重
       seen.add(address);
       // local = 服务器认的地址名（new_address 的 name）；缺则取地址本地部分
       out.push({ address, local: String(r.name ?? localOf(address)), createdAt: r.created_at ?? null });
