@@ -123,8 +123,12 @@ export function cfDomain(provider: TempProvider): string { return provider.domai
 
 export async function cfStatus(provider: TempProvider): Promise<any> {
   if (provider.type === "cf") {
-    // mint 一个固定探针地址验证 x-admin-auth 通不通（幂等、无害）
-    await cfMint(provider, "healthcheck");
+    // 用只读 admin 端点 /admin/address 验证 x-admin-auth（200=通）。
+    // ⚠ 不再 mint "healthcheck" 探针地址——那会往服务器地址表登记一条永久记录、反复污染列表
+    //   （历史上 edu/roastalpha 的 healthcheck 就是这里反复建出来的）。
+    const base = provider.endpoint.replace(/\/+$/, "");
+    const res = await fetch(`${base}/admin/address?limit=1`, { headers: { "x-admin-auth": provider.password } });
+    if (!res.ok) throw new Error(`cf admin auth check HTTP ${res.status}`);
     return { domain: provider.domain };
   }
   return phpApi(provider, "external_status");
@@ -251,8 +255,28 @@ export async function cfCreateAlias(provider: TempProvider, local: string): Prom
 
 export async function cfDeleteAlias(provider: TempProvider, local: string): Promise<void> {
   if (provider.type === "cf") {
-    // cf 壳无远端删除口子，仅从面板记账移除（地址本身是临时的，自然过期）
-    cfRemoveName(provider, localOf(local));
+    // canonical 删除：先按 local 在 /admin/address 反查数字 id，再 DELETE /admin/delete_address/:id。
+    // （edu/roastalpha 的 cf.php shim 2026-06-27 已补齐此 canonical 端点；之前 cf 壳无删除口、只能清本地记账。）
+    const base = provider.endpoint.replace(/\/+$/, "");
+    const target = localOf(local);
+    let addrId: number | null = null;
+    try {
+      const res = await fetch(`${base}/admin/address?limit=1000&offset=0`, { headers: { "x-admin-auth": provider.password } });
+      if (res.ok) {
+        const j: any = await res.json().catch(() => null);
+        const results: any[] = Array.isArray(j?.results) ? j.results : [];
+        const row = results.find((r) => localOf(String(r.address || r.name || "")) === target || String(r.name) === target);
+        if (row && row.id != null) addrId = Number(row.id);
+      }
+    } catch { /* 列表失败则跳过远端删除，至少清本地记账 */ }
+    if (addrId != null) {
+      const del = await fetch(`${base}/admin/delete_address/${addrId}`, {
+        method: "DELETE",
+        headers: { "x-admin-auth": provider.password }
+      });
+      if (!del.ok) throw new Error(`cf delete_address HTTP ${del.status}`);
+    }
+    cfRemoveName(provider, target); // 同步清面板本地记账
     return;
   }
   await phpApi(provider, "external_delete_alias", { method: "POST", body: { local } });
