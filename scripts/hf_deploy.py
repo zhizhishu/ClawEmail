@@ -11,7 +11,7 @@ Usage (PowerShell):
 import os
 import sys
 
-REPO_ID = "Echocq/clawemail"
+REPO_ID = "alphaeee/clawemail"
 REPO_TYPE = "space"
 
 IGNORE = [
@@ -62,7 +62,7 @@ def main() -> int:
         repo_type=REPO_TYPE,
         folder_path=root,
         ignore_patterns=IGNORE,
-        commit_message="fix(cf): filter /admin/address aliases by provider domain — hide stale entries from old/other domains (e.g. legacy wahah.xyz) so each category shows only its own domain",
+        commit_message="fix(cf): real server-side delete via canonical /admin/delete_address/:id + stop minting healthcheck probe in cfStatus (use read-only /admin/address)",
     )
     print(f"uploaded: {getattr(commit, 'oid', commit)}")
 
