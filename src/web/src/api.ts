@@ -82,6 +82,15 @@ export function setAdminPassword(value: string) {
   }
 }
 
+// API base prefix for mounting under a sub-path (e.g. "/email" when co-located
+// behind FusionSearch). Empty by default → standalone deploy is unaffected.
+// Injected at build time via VITE_API_BASE; used by every API call, the SSE
+// stream, and attachment links.
+export const API_BASE = (import.meta as any).env?.VITE_API_BASE ?? "";
+export function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
 async function requestJson<T>(
   path: string,
   init: RequestInit = {},
@@ -93,7 +102,7 @@ async function requestJson<T>(
     headers.set("content-type", "application/json");
   }
 
-  const response = await fetch(path, {
+  const response = await fetch(API_BASE + path, {
     ...init,
     headers
   });
@@ -219,7 +228,7 @@ export async function replyMail(input: ReplyMailInput) {
 }
 
 export function createEventSource(): EventSource {
-  return new EventSource(`/api/events?token=${encodeURIComponent(adminPassword)}`);
+  return new EventSource(apiUrl(`/api/events?token=${encodeURIComponent(adminPassword)}`));
 }
 
 export function getRuntimeMode(): RuntimeMode {

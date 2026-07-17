@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { deleteMail, type MailDetail, type MailSummary } from "../api";
+import { apiUrl, deleteMail, type MailDetail, type MailSummary } from "../api";
 import { useResizableWidth } from "../hooks";
 import { plural, usePrefs } from "../i18n";
 import { parseMailTime, parseServerTime } from "../time";
@@ -242,7 +242,7 @@ export function InboxView({
                 {selectedMail.attachments.map((item) => (
                   <a
                     key={item.id}
-                    href={`/api/mails/${selectedMail.id}/attachments/${encodeURIComponent(item.provider_part_id)}?token=${encodeURIComponent(adminPassword)}`}
+                    href={apiUrl(`/api/mails/${selectedMail.id}/attachments/${encodeURIComponent(item.provider_part_id)}?token=${encodeURIComponent(adminPassword)}`)}
                   >
                     {item.filename || item.provider_part_id}
                     {item.size ? (
