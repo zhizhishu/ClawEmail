@@ -28,8 +28,9 @@ import {
 // canonical cf 邮件对象（dreamhunter2333/cloudflare_temp_email）。严格对齐，不留旧字段名。
 //   raw    : {id, message_id, source, address, raw, created_at}
 //   parsed : {id, message_id, source, address, sender, subject, text, html, created_at, attachments}
-const toRaw = (m: any) => ({ id: m.id, message_id: null, source: m.from_address, address: m.to_address, raw: m.raw, created_at: m.created_at });
-const toParsed = (m: any) => ({ id: m.id, message_id: null, source: m.from_address, address: m.to_address, sender: m.from_address, subject: m.subject, text: m.message, html: m.html ?? null, created_at: m.created_at });
+// created_at：Batch 1 原样透传（时间格式/时区归一放到服务端批次做——各服务器自知时区，别在此盲砍时区致跨源错位）
+const toRaw = (m: any) => ({ id: m.id, message_id: m.message_id ?? null, source: m.from_address, address: m.to_address, raw: m.raw, created_at: m.created_at });
+const toParsed = (m: any) => ({ id: m.id, message_id: m.message_id ?? null, source: m.from_address, address: m.to_address, sender: m.from_address, subject: m.subject, text: m.message, html: m.html ?? null, created_at: m.created_at, attachments: (Array.isArray(m.attachments) ? m.attachments : []).map((a: any) => ({ filename: a.filename, mimeType: a.mimeType, size: a.size })) });
 
 // 兼容 cloudflare_temp_email 的 send_mail 字段名差异
 function parseSend(body: any): { to: string[]; subject?: string; content?: string; html?: boolean } {
@@ -128,8 +129,8 @@ export async function extCfRoutes(app: FastifyInstance): Promise<void> {
     try {
       const m = await extReadSingle(payload, mail_id);
       if (!m) return reply.code(404).send({ error: "mail not found" });
-      // canonical 附件元数据 {filename, mimeType, size}（+id 供本实现按 part 下载）
-      const attachments = (m.attachments ?? []).map((a) => ({ id: a.id, filename: a.filename, mimeType: a.contentType, size: a.size }));
+      // canonical 附件元数据 {filename, mimeType, size}（+id 供本实现按 part 下载；临时源无 id）
+      const attachments = (Array.isArray(m.attachments) ? m.attachments : []).map((a) => ({ id: a.id, filename: a.filename, mimeType: a.mimeType, size: a.size }));
       return { ...(parsed ? toParsed(m) : toRaw(m)), attachments };
     } catch (e) {
       return reply.code(502).send({ error: e instanceof Error ? e.message : String(e) });

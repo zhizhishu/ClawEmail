@@ -156,7 +156,10 @@ export type ExtMail = {
   message: string;
   html: string | null;
   created_at: string | null;
-  attachments?: ExtAttachmentMeta[];
+  // canonical passthrough：上游有则带出，无则降级（message_id 缺省 undefined→出口层归 null、attachments 缺省 []）
+  message_id?: string;
+  // id 可选：claw 子邮箱带 part id 供附件下载；临时源无 id
+  attachments?: Array<{ id?: string; filename: string; mimeType: string; size: number }>;
 };
 
 export async function extReadMails(p: AddrPayload, limit: number, offset: number): Promise<ExtMail[]> {
@@ -176,7 +179,12 @@ export async function extReadMails(p: AddrPayload, limit: number, offset: number
         subject: m.subject ?? "",
         message: text || (m.html?.content ?? ""),
         html: m.html?.content ?? null,
-        created_at: m.date ?? null
+        created_at: m.date ?? null,
+        message_id: m.messageId ?? m.message_id ?? undefined,
+        // claw MailDetail.attachments：contentType→mimeType，size 取 contentLength/size
+        attachments: (Array.isArray(m.attachments) ? m.attachments : []).map((a: any) => ({
+          id: a.id, filename: a.filename ?? "", mimeType: a.contentType ?? "", size: a.contentLength ?? a.size ?? 0
+        }))
       });
     }
     return out;
@@ -193,7 +201,9 @@ export async function extReadMails(p: AddrPayload, limit: number, offset: number
     subject: m.subject ?? "",
     message: m.bodyText ?? m.preview ?? "",
     html: m.bodyHtml ?? null,
-    created_at: m.date ?? null
+    created_at: m.date ?? null,
+    message_id: m.messageId ?? undefined,
+    attachments: (Array.isArray(m.attachments) ? m.attachments : []).map((a) => ({ filename: a.filename, mimeType: a.mimeType, size: a.size }))
   }));
 }
 
@@ -254,8 +264,10 @@ export async function extReadSingle(p: AddrPayload, mailId: string): Promise<Ext
       message: text || (m.html?.content ?? ""),
       html: m.html?.content ?? null,
       created_at: m.date ?? null,
-      attachments: (m.attachments ?? []).map((a: any) => ({
-        id: a.id, filename: a.filename ?? null, contentType: a.contentType ?? null, size: a.contentLength ?? a.size ?? null
+      message_id: m.messageId ?? m.message_id ?? undefined,
+      // claw MailDetail.attachments：contentType→mimeType，size 取 contentLength/size
+      attachments: (Array.isArray(m.attachments) ? m.attachments : []).map((a: any) => ({
+        id: a.id, filename: a.filename ?? "", mimeType: a.contentType ?? "", size: a.contentLength ?? a.size ?? 0
       }))
     };
   }
@@ -271,7 +283,9 @@ export async function extReadSingle(p: AddrPayload, mailId: string): Promise<Ext
     subject: d.subject ?? "",
     message: body,
     html: d.bodyHtml ?? null,
-    created_at: d.date ?? null
+    created_at: d.date ?? null,
+    message_id: d.messageId ?? undefined,
+    attachments: (Array.isArray(d.attachments) ? d.attachments : []).map((a: any) => ({ filename: a.filename, mimeType: a.mimeType, size: a.size }))
   };
 }
 

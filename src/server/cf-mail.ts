@@ -27,6 +27,9 @@ export type CfMessageSummary = {
   to: string | null;
   date: string | null;
   preview: string | null;
+  // canonical passthrough：上游有则带出，无则降级（messageId 缺省 undefined、attachments 缺省 []）
+  messageId?: string;
+  attachments?: Array<{ filename: string; mimeType: string; size: number }>;
 };
 export type CfMessageDetail = CfMessageSummary & {
   recipientHint?: string | null;
@@ -106,15 +109,26 @@ async function cfReadParsed(provider: TempProvider, local: string, limit = 50): 
   return Array.isArray(j) ? j : (j?.results ?? j?.mails ?? []);
 }
 
-// canonical cf parsed 字段：{id, sender, subject, text, html, source, address, created_at}
+// canonical cf parsed 字段：{id, message_id, sender, source, subject, text, html, address, created_at, attachments}
 function cfMap(m: any, alias: string): CfMessageSummary {
+  // 附件：roastalpha 字段存在但常为空；两台临时服务器字段名可能是 mimeType 或 mime，两者都容忍
+  const attachments = Array.isArray(m.attachments)
+    ? m.attachments.map((a: any) => ({
+        filename: String(a.filename ?? ""),
+        mimeType: String(a.mimeType ?? a.mime ?? ""),
+        size: Number(a.size ?? 0)
+      }))
+    : [];
   return {
     uid: Number(m.id ?? 0),
     subject: m.subject ?? null,
-    from: m.sender ?? m.source ?? null,
+    // 发件人：roastalpha 用 sender/source；edu 用 from_address/from_name；再兜底 from
+    from: m.sender ?? m.source ?? m.from_address ?? m.from_name ?? m.from ?? null,
     to: m.address ?? alias,
     date: m.created_at ?? null,
-    preview: snippet(m.text)
+    preview: snippet(m.text),
+    messageId: m.message_id != null ? String(m.message_id) : undefined,
+    attachments
   };
 }
 
