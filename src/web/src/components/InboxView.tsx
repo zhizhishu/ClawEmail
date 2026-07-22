@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { apiUrl, deleteMail, type MailDetail, type MailSummary } from "../api";
 import { useResizableWidth } from "../hooks";
 import { plural, usePrefs } from "../i18n";
 import { parseMailTime, parseServerTime } from "../time";
+import { SearchBox } from "./SearchBox";
 
 type Props = {
   selectedMailbox: string;
@@ -81,6 +82,10 @@ export function InboxView({
   });
   const [query, setQuery] = useState("");
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const searchItems = useMemo(
+    () => mails.map((m) => ({ subject: m.subject, from: m.source, preview: m.text })),
+    [mails]
+  );
 
   async function handleDeleteMail() {
     if (!selectedMail || !confirm(t("inbox.confirm.delete"))) return;
@@ -110,10 +115,13 @@ export function InboxView({
         </div>
         {mails.length > 0 && (
           <div className="list-search">
-            <input
+            <SearchBox
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={setQuery}
+              items={searchItems}
               placeholder={lang === "zh" ? "搜索邮件…" : "Search mail…"}
+              lang={lang}
+              storageKey="clawemail:search:claw"
             />
           </div>
         )}

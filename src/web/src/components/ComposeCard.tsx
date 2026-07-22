@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type MouseEvent as RMouseEvent, type KeyboardEvent as RKeyboardEvent } from "react";
 import { sendMail, replyMail, type MailDetail } from "../api";
 import { usePrefs } from "../i18n";
 
@@ -16,6 +16,7 @@ type Props = {
 const splitRecipients = (v: string) => v.split(/[,\n;]/).map((s) => s.trim()).filter(Boolean);
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const stripHtml = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+const clock = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 // 16px 线性 SVG 图标（替掉廉价感的 emoji，单色走 currentColor）
 const svg = (path: ReactNode) => (
@@ -25,7 +26,12 @@ const Ico = {
   link: svg(<><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></>),
   image: svg(<><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21" /></>),
   upload: svg(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M17 8l-5-5-5 5" /><path d="M12 3v12" /></>),
-  eye: svg(<><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>)
+  eye: svg(<><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>),
+  heading: svg(<><path d="M6 4v16M18 4v16M6 12h12" /></>),
+  listUl: svg(<><path d="M8 6h13M8 12h13M8 18h13" /><circle cx="3.5" cy="6" r="1.1" fill="currentColor" stroke="none" /><circle cx="3.5" cy="12" r="1.1" fill="currentColor" stroke="none" /><circle cx="3.5" cy="18" r="1.1" fill="currentColor" stroke="none" /></>),
+  listOl: svg(<><path d="M10 6h11M10 12h11M10 18h11" /><path d="M4 5.5 5.2 5v3M3.6 15.2c.2-.7 1.6-.7 1.6.2 0 .6-.6.9-1.4 1.8h1.6" strokeWidth={1.4} /></>),
+  quote: svg(<><path d="M7 7H4a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1h2v2a2 2 0 0 1-2 2M18 7h-3a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1h2v2a2 2 0 0 1-2 2" /></>),
+  code: svg(<><path d="m9 8-4 4 4 4M15 8l4 4-4 4" /></>)
 };
 
 export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError }: Props) {
@@ -43,12 +49,18 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
   const [replyAll, setReplyAll] = useState(false);
   const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null); // 草稿「已保存」时间戳
+  const [fmt, setFmt] = useState({ bold: false, italic: false, underline: false, ul: false, ol: false, block: "" });
   const richRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const saveTimer = useRef<number | null>(null);
 
-  // 打开时初始化；回复模式自动引用原文（像 Gmail 应用上文）
+  const draftKey = () => `clawemail:draft:${reply ? "r" + reply.id : "n:" + (fromMailbox || "_")}`;
+
+  // 打开时初始化；回复模式自动引用原文（像 Gmail 应用上文）；新建则尝试恢复草稿
   useEffect(() => {
     if (!open) return;
+    setCc(""); setBcc(""); setShowCcBcc(false); setReplyAll(false); setPreview(false); setBusy(false); setSavedAt(null);
     if (reply) {
       setTo(reply.source || "");
       setSubject(/^re:/i.test(reply.subject || "") ? reply.subject || "" : `Re: ${reply.subject || ""}`);
@@ -61,10 +73,24 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
       setMode("rich");
       setRichHtml(quoted);
       setBody(`\n\n${L("在", "On")} ${when}，${reply.source || ""} ${L("写道：", "wrote:")}\n` + origText.split("\n").map((l) => "> " + l).join("\n"));
-    } else {
-      setTo(""); setSubject(""); setMode("text"); setBody(""); setRichHtml("");
+      return;
     }
-    setCc(""); setBcc(""); setShowCcBcc(false); setReplyAll(false); setPreview(false); setBusy(false);
+    // 新建：尝试恢复上次未发出的草稿
+    let restored = false;
+    try {
+      const raw = localStorage.getItem(draftKey());
+      if (raw) {
+        const d = JSON.parse(raw);
+        if (d && (d.to || d.subject || d.body || d.richHtml)) {
+          setTo(d.to || ""); setCc(d.cc || ""); setBcc(d.bcc || ""); setShowCcBcc(Boolean(d.cc || d.bcc));
+          setSubject(d.subject || ""); setMode((d.mode as Mode) || "text");
+          setBody(d.body || ""); setRichHtml(d.richHtml || "");
+          setSavedAt(d.ts ? clock(d.ts) : null);
+          restored = true;
+        }
+      }
+    } catch { /* 坏草稿忽略 */ }
+    if (!restored) { setTo(""); setSubject(""); setMode("text"); setBody(""); setRichHtml(""); }
   }, [open, reply]);
 
   // 切到富文本时把内容灌进 contentEditable
@@ -81,6 +107,23 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // 草稿自动保存：任一字段变动 700ms 后落 localStorage，显示「已保存 · HH:MM」
+  useEffect(() => {
+    if (!open) return;
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      const rich = richRef.current?.innerHTML ?? richHtml;
+      const empty = !to.trim() && !cc.trim() && !bcc.trim() && !subject.trim() && !body.trim() && !stripHtml(rich);
+      try {
+        if (empty) { localStorage.removeItem(draftKey()); return; }
+        const ts = Date.now();
+        localStorage.setItem(draftKey(), JSON.stringify({ to, cc, bcc, subject, mode, body, richHtml: rich, ts }));
+        setSavedAt(clock(ts));
+      } catch { /* 配额满则跳过 */ }
+    }, 700);
+    return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); };
+  }, [open, to, cc, bcc, subject, body, richHtml, mode]);
+
   if (!open) return null;
 
   function switchMode(m: Mode) {
@@ -95,11 +138,52 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
     setMode(m);
   }
 
+  function refreshFmt() {
+    try {
+      setFmt({
+        bold: document.queryCommandState("bold"),
+        italic: document.queryCommandState("italic"),
+        underline: document.queryCommandState("underline"),
+        ul: document.queryCommandState("insertUnorderedList"),
+        ol: document.queryCommandState("insertOrderedList"),
+        block: (document.queryCommandValue("formatBlock") || "").toLowerCase()
+      });
+    } catch { /* 某些浏览器 queryCommand 不支持则忽略 */ }
+  }
   function exec(cmd: string, val?: string) {
     richRef.current?.focus();
     document.execCommand(cmd, false, val);
     setRichHtml(richRef.current?.innerHTML ?? "");
+    refreshFmt();
   }
+  function toggleBlock(tag: string) {
+    const cur = (document.queryCommandValue("formatBlock") || "").toLowerCase();
+    exec("formatBlock", cur === tag ? "p" : tag);
+  }
+  function insertCode() {
+    richRef.current?.focus();
+    const sel = window.getSelection();
+    const text = sel && !sel.isCollapsed ? sel.toString() : "";
+    exec("insertHTML", `<code>${text ? esc(text) : L("代码", "code")}</code>&nbsp;`);
+  }
+  function promptLink() {
+    const u = prompt(L("链接 URL：", "Link URL:"));
+    if (u && u.trim()) exec("createLink", u.trim());
+  }
+  // 工具按钮统一 onMouseDown（preventDefault 保住选区，点击不丢焦点）
+  const mdCmd = (cmd: string) => (e: RMouseEvent) => { e.preventDefault(); exec(cmd); };
+  const mdBlock = (tag: string) => (e: RMouseEvent) => { e.preventDefault(); toggleBlock(tag); };
+
+  function onRichKeyDown(e: RKeyboardEvent<HTMLDivElement>) {
+    const mod = e.ctrlKey || e.metaKey;
+    if (!mod) return;
+    const k = e.key.toLowerCase();
+    if (k === "b") { e.preventDefault(); exec("bold"); }
+    else if (k === "i") { e.preventDefault(); exec("italic"); }
+    else if (k === "u") { e.preventDefault(); exec("underline"); }
+    else if (k === "k") { e.preventDefault(); promptLink(); }
+  }
+
   function insertImg(src: string) {
     const tag = `<img src="${src}" style="max-width:100%" alt="" />`;
     if (mode === "rich") {
@@ -128,6 +212,18 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
     return { content: body, html: false };
   }
 
+  function clearDraft() {
+    try { localStorage.removeItem(draftKey()); } catch { /* noop */ }
+  }
+  function handleClear() {
+    if (!confirm(L("清空正文？此操作不可撤销。", "Clear the body? This cannot be undone."))) return;
+    setBody(""); setRichHtml("");
+    if (richRef.current) richRef.current.innerHTML = "";
+    setSavedAt(null);
+    clearDraft();
+    refreshFmt();
+  }
+
   async function handleSend() {
     const { content, html } = currentBody();
     setBusy(true);
@@ -149,6 +245,7 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
         });
         onSent(L("邮件已发送", "Mail sent"));
       }
+      clearDraft();
       onClose();
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
@@ -160,6 +257,12 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
   const canSend = reply ? true : Boolean(fromMailbox) && splitRecipients(to).length > 0;
   const { content: pvContent, html: pvHtml } = currentBody();
   const previewSrc = pvHtml ? pvContent : `<pre style="white-space:pre-wrap;font-family:ui-sans-serif,system-ui;font-size:14px;color:#111">${esc(pvContent)}</pre>`;
+
+  // 实时字数/字符统计（富文本/HTML 去标签后计；CJK 逐字、拉丁按词组）
+  const plain = mode === "text" ? body : stripHtml(mode === "rich" ? richHtml : body);
+  const chars = [...plain].length;
+  const words = (plain.match(/[㐀-鿿豈-﫿]/g)?.length || 0) + (plain.match(/[A-Za-z0-9À-ɏ]+/g)?.length || 0);
+  const hasContent = Boolean(plain.trim()) || Boolean((mode === "rich" ? richHtml : body).trim());
 
   return (
     <div className="compose-overlay" onClick={onClose}>
@@ -199,9 +302,17 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
             <>
               <span className="tb-div" />
               <div className="rt-tools">
-                <button className="tb-btn tb-glyph" onMouseDown={(e) => { e.preventDefault(); exec("bold"); }} title={L("加粗", "Bold")}><b>B</b></button>
-                <button className="tb-btn tb-glyph" onMouseDown={(e) => { e.preventDefault(); exec("italic"); }} title={L("斜体", "Italic")}><i>I</i></button>
-                <button className="tb-btn" onMouseDown={(e) => { e.preventDefault(); const u = prompt(L("链接 URL：", "Link URL:")); if (u) exec("createLink", u); }} title={L("链接", "Link")}>{Ico.link}</button>
+                <button className={`tb-btn tb-glyph ${fmt.bold ? "on" : ""}`} onMouseDown={mdCmd("bold")} title={L("加粗 (Ctrl+B)", "Bold (Ctrl+B)")}><b>B</b></button>
+                <button className={`tb-btn tb-glyph ${fmt.italic ? "on" : ""}`} onMouseDown={mdCmd("italic")} title={L("斜体 (Ctrl+I)", "Italic (Ctrl+I)")}><i>I</i></button>
+                <button className={`tb-btn tb-glyph ${fmt.underline ? "on" : ""}`} onMouseDown={mdCmd("underline")} title={L("下划线 (Ctrl+U)", "Underline (Ctrl+U)")}><u>U</u></button>
+                <span className="tb-div" />
+                <button className={`tb-btn ${fmt.block === "h3" ? "on" : ""}`} onMouseDown={mdBlock("h3")} title={L("标题", "Heading")}>{Ico.heading}</button>
+                <button className={`tb-btn ${fmt.ul ? "on" : ""}`} onMouseDown={mdCmd("insertUnorderedList")} title={L("项目符号列表", "Bulleted list")}>{Ico.listUl}</button>
+                <button className={`tb-btn ${fmt.ol ? "on" : ""}`} onMouseDown={mdCmd("insertOrderedList")} title={L("编号列表", "Numbered list")}>{Ico.listOl}</button>
+                <span className="tb-div" />
+                <button className="tb-btn" onMouseDown={(e) => { e.preventDefault(); promptLink(); }} title={L("链接 (Ctrl+K)", "Link (Ctrl+K)")}>{Ico.link}</button>
+                <button className={`tb-btn ${fmt.block === "blockquote" ? "on" : ""}`} onMouseDown={mdBlock("blockquote")} title={L("引用", "Quote")}>{Ico.quote}</button>
+                <button className="tb-btn" onMouseDown={(e) => { e.preventDefault(); insertCode(); }} title={L("代码", "Code")}>{Ico.code}</button>
               </div>
             </>
           )}
@@ -217,10 +328,29 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
           {preview ? (
             <iframe className="compose-preview" title="preview" sandbox="" srcDoc={previewSrc} />
           ) : mode === "rich" ? (
-            <div ref={richRef} className="rt-area" data-placeholder={L("正文…", "Body…")} contentEditable suppressContentEditableWarning onInput={() => setRichHtml(richRef.current?.innerHTML ?? "")} />
+            <div
+              ref={richRef}
+              className="rt-area"
+              data-placeholder={L("正文…", "Body…")}
+              contentEditable
+              suppressContentEditableWarning
+              onInput={() => setRichHtml(richRef.current?.innerHTML ?? "")}
+              onKeyDown={onRichKeyDown}
+              onKeyUp={refreshFmt}
+              onMouseUp={refreshFmt}
+              onFocus={refreshFmt}
+            />
           ) : (
             <textarea className="compose-text" value={body} onChange={(e) => setBody(e.target.value)} placeholder={mode === "html" ? L("HTML 源码…", "HTML source…") : L("正文…", "Body…")} />
           )}
+        </div>
+
+        <div className="compose-stats">
+          <span className="cs-count">
+            <b>{words}</b> {L("词", "words")}<span className="cs-dot">·</span><b>{chars}</b> {L("字符", "chars")}
+          </span>
+          {savedAt && <span className="cs-saved" aria-live="polite"><span className="cs-tick" />{L("已保存", "Saved")} {savedAt}</span>}
+          <button className="cs-clear" onClick={handleClear} disabled={busy || !hasContent}>{L("清空", "Clear")}</button>
         </div>
 
         <footer className="compose-foot">

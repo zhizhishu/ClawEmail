@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   clearCfConfig,
   createCfAlias,
@@ -22,6 +22,7 @@ import {
 } from "../api";
 import { useResizableWidth } from "../hooks";
 import { usePrefs } from "../i18n";
+import { SearchBox } from "./SearchBox";
 
 type Props = {
   onError: (msg: string) => void;
@@ -57,6 +58,10 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
   const [busy, setBusy] = useState(false);
 
   const [query, setQuery] = useState("");
+  const searchItems = useMemo(
+    () => messages.map((m) => ({ subject: m.subject, from: m.from, preview: m.preview })),
+    [messages]
+  );
   const [newLocal, setNewLocal] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
   const [to, setTo] = useState("");
@@ -601,10 +606,13 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
           </div>
           {selectedAlias && messages.length > 0 && (
             <div className="list-search">
-              <input
+              <SearchBox
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={setQuery}
+                items={searchItems}
                 placeholder={L("搜索邮件…", "Search mail…")}
+                lang={lang}
+                storageKey="clawemail:search:edu"
               />
             </div>
           )}
