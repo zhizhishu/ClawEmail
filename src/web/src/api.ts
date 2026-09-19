@@ -321,13 +321,15 @@ export type CfSendInput = {
 };
 
 // 多 provider：所有临时邮箱函数都接受可选 providerId；不传 = 主源（兼容旧调用）。
+export type TempProviderType = "php" | "cf" | "icloud";
 export type TempProviderPublic = {
   id: string;
   name: string;
-  type: "php" | "cf";
+  type: TempProviderType;
   endpoint: string;
   domain: string;
   hasPassword: boolean;
+  accountId?: string;
 };
 
 function pq(provider?: string): string {
@@ -341,10 +343,11 @@ export async function fetchCfProviders(): Promise<TempProviderPublic[]> {
 
 export async function addCfProvider(input: {
   name: string;
-  type?: "php" | "cf";
+  type?: TempProviderType;
   endpoint: string;
   domain?: string;
   password: string;
+  accountId?: string;
 }): Promise<TempProviderPublic> {
   return requestJson<TempProviderPublic>("/api/cf/providers", {
     method: "POST",
@@ -354,7 +357,7 @@ export async function addCfProvider(input: {
 
 export async function updateCfProvider(
   id: string,
-  patch: { name?: string; type?: "php" | "cf"; endpoint?: string; domain?: string; password?: string }
+  patch: { name?: string; type?: TempProviderType; endpoint?: string; domain?: string; password?: string; accountId?: string }
 ): Promise<TempProviderPublic> {
   return requestJson<TempProviderPublic>(`/api/cf/providers/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -500,7 +503,7 @@ export async function saveAiConfig(input: {
 }
 
 export type SecretBundle = {
-  temp: Array<{ id: string; name: string; type: "php" | "cf"; endpoint: string; domain: string; password: string | null }>;
+  temp: Array<{ id: string; name: string; type: TempProviderType; endpoint: string; domain: string; password: string | null }>;
   claw: { apiKey: string | null; hasCookie: boolean };
   ai: { apiKey: string | null };
 };

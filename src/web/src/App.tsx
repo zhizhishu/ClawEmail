@@ -37,6 +37,7 @@ import {
   verifyClawLoginCode,
   type CfAlias,
   type TempProviderPublic,
+  type TempProviderType,
   type ClawAuthStatus,
   type ListenerSnapshot,
   type MailDetail,
@@ -343,10 +344,11 @@ export function App() {
 
   async function handleAddTempProvider(input: {
     name: string;
-    type: "php" | "cf";
+    type: TempProviderType;
     endpoint: string;
     domain: string;
     password: string;
+    accountId?: string;
   }) {
     setStatus(""); setError("");
     try {
@@ -362,7 +364,7 @@ export function App() {
 
   async function handleUpdateTempProvider(
     id: string,
-    patch: { name?: string; type?: "php" | "cf"; endpoint?: string; domain?: string; password?: string }
+    patch: { name?: string; type?: TempProviderType; endpoint?: string; domain?: string; password?: string; accountId?: string }
   ) {
     setStatus(""); setError("");
     try {

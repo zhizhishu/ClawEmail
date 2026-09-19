@@ -7,20 +7,26 @@
 import { getSetting, setSetting } from "./db";
 import { config } from "./config";
 
-export type TempProviderType = "php" | "cf";
+export type TempProviderType = "php" | "cf" | "icloud";
 
 export type TempProvider = {
   id: string;
   name: string;
   type: TempProviderType;
-  endpoint: string; // php: api.php 地址；cf: 实例 base url
+  endpoint: string; // php: api.php 地址；cf: 实例 base url；icloud: icloud-hme 服务 base url
   domain: string;
-  password: string; // php: 管理员密码；cf: 管理员 auth(x-admin-auth)
+  password: string; // php: 管理员密码；cf: 管理员 auth(x-admin-auth)；icloud: Basic Auth 密码(user 固定 claw)
+  accountId?: string; // icloud: 多账号时指定 account_id；其它类型不用
 };
 
 export type TempProviderPublic = Omit<TempProvider, "password"> & { hasPassword: boolean };
 
 const KEY = "cf.providers";
+
+// 收敛 provider.type 到三个合法值；未知一律退回 php（别把 cf/icloud 压成 php）
+function asType(x: any): TempProviderType {
+  return x === "cf" || x === "icloud" ? x : "php";
+}
 
 function slug(s: string): string {
   return s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32) || "temp";
@@ -57,10 +63,11 @@ function normalize(p: any): TempProvider {
   return {
     id: String(p.id),
     name: String(p.name || p.domain || p.id),
-    type: p.type === "cf" ? "cf" : "php",
+    type: asType(p.type),
     endpoint: String(p.endpoint || "").replace(/\/+$/, ""),
     domain: String(p.domain || ""),
-    password: String(p.password || "")
+    password: String(p.password || ""),
+    ...(p.accountId ? { accountId: String(p.accountId) } : {})
   };
 }
 
@@ -90,6 +97,7 @@ export function addProvider(input: {
   endpoint: string;
   domain?: string;
   password: string;
+  accountId?: string;
 }): TempProvider {
   const list = listProviders();
   let id = slug(input.name || input.domain || "temp");
@@ -98,10 +106,11 @@ export function addProvider(input: {
   const provider: TempProvider = {
     id,
     name: input.name?.trim() || input.domain || id,
-    type: input.type === "cf" ? "cf" : "php",
+    type: asType(input.type),
     endpoint: input.endpoint.trim().replace(/\/+$/, ""),
     domain: (input.domain ?? "").trim(),
-    password: input.password
+    password: input.password,
+    ...(input.accountId?.trim() ? { accountId: input.accountId.trim() } : {})
   };
   persist([...list, provider]);
   return provider;
@@ -109,7 +118,7 @@ export function addProvider(input: {
 
 export function updateProvider(
   id: string,
-  patch: Partial<Pick<TempProvider, "name" | "type" | "endpoint" | "domain" | "password">>
+  patch: Partial<Pick<TempProvider, "name" | "type" | "endpoint" | "domain" | "password" | "accountId">>
 ): TempProvider | undefined {
   const list = listProviders();
   const idx = list.findIndex((p) => p.id === id);
@@ -122,7 +131,15 @@ export function updateProvider(
     endpoint: (patch.endpoint ?? cur.endpoint).trim().replace(/\/+$/, ""),
     domain: patch.domain !== undefined ? patch.domain.trim() : cur.domain,
     // 只有传入非空才覆盖密码，方便改 endpoint/domain 时不必重输
-    password: patch.password && patch.password.trim() ? patch.password : cur.password
+    password: patch.password && patch.password.trim() ? patch.password : cur.password,
+    // accountId：传入非空则覆盖，否则保留原值（透传持久化）
+    ...(patch.accountId !== undefined
+      ? patch.accountId.trim()
+        ? { accountId: patch.accountId.trim() }
+        : {}
+      : cur.accountId
+        ? { accountId: cur.accountId }
+        : {})
   };
   list[idx] = next;
   persist(list);

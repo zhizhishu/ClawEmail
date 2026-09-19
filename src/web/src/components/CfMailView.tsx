@@ -188,15 +188,19 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
   useEffect(() => {
     if (configured) {
       loadAliases();
-      fetchCfGlobalForwarding(providerId)
-        .then((f) => {
-          setGlobalFwdEnabled(!!f.enabled);
-          setGlobalFwdTo((f.forwardTo ?? []).join(", "));
-        })
-        .catch(() => {});
+      // icloud is receive-only — no forwarding endpoint to probe.
+      const t = providers.find((p) => p.id === (providerId ?? providers[0]?.id))?.type;
+      if (t !== "icloud") {
+        fetchCfGlobalForwarding(providerId)
+          .then((f) => {
+            setGlobalFwdEnabled(!!f.enabled);
+            setGlobalFwdTo((f.forwardTo ?? []).join(", "));
+          })
+          .catch(() => {});
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configured, providerId]);
+  }, [configured, providerId, providers]);
 
   useEffect(() => {
     if (focusAlias) setSelectedAlias(focusAlias);
@@ -349,6 +353,10 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
     }
   }
 
+  // icloud (icloud-hme) is receive-only: hide compose / forwarding for it.
+  const curType = providers.find((p) => p.id === (providerId ?? providers[0]?.id))?.type;
+  const isIcloud = curType === "icloud";
+
   const configForm = (
     <div className="cf-config">
       <div className="cf-config-grid">
@@ -466,21 +474,25 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
         <button onClick={() => loadInbox()} disabled={!selectedAlias || busy}>
           {busy ? L("加载中…", "loading…") : L("↻ 刷新", "↻ refresh")}
         </button>
-        <button
-          className="primary"
-          onClick={() => setComposeOpen((v) => !v)}
-          disabled={!selectedAlias}
-        >
-          {L("写信", "Compose")}
-        </button>
-        <button
-          className={fwdOpen ? "active" : ""}
-          onClick={() => setFwdOpen((v) => !v)}
-          title={L("转发设置", "Forwarding")}
-        >
-          {L("转发", "Forward")}
-          {(aliasFwdEnabled || globalFwdEnabled) && <span className="fwd-dot" />}
-        </button>
+        {!isIcloud && (
+          <button
+            className="primary"
+            onClick={() => setComposeOpen((v) => !v)}
+            disabled={!selectedAlias}
+          >
+            {L("写信", "Compose")}
+          </button>
+        )}
+        {!isIcloud && (
+          <button
+            className={fwdOpen ? "active" : ""}
+            onClick={() => setFwdOpen((v) => !v)}
+            title={L("转发设置", "Forwarding")}
+          >
+            {L("转发", "Forward")}
+            {(aliasFwdEnabled || globalFwdEnabled) && <span className="fwd-dot" />}
+          </button>
+        )}
         <button
           className={cfgOpen ? "active" : ""}
           onClick={() => setCfgOpen((v) => !v)}
@@ -509,7 +521,7 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
         </button>
       </div>
 
-      {composeOpen && (
+      {!isIcloud && composeOpen && (
         <div className="reply-box" style={{ marginBottom: 14 }}>
           <div className="head">
             <span className="label">
@@ -538,7 +550,7 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
         </div>
       )}
 
-      {fwdOpen && (
+      {!isIcloud && fwdOpen && (
         <div className="fwd-panel" style={{ marginBottom: 14 }}>
           <div className="fwd-row">
             <div className="fwd-head">

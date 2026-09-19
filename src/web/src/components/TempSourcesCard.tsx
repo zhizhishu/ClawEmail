@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { fetchCfStatus, fetchSecrets, type TempProviderPublic } from "../api";
+import { fetchCfStatus, fetchSecrets, type TempProviderPublic, type TempProviderType } from "../api";
 import { usePrefs } from "../i18n";
 
-type ProviderPatch = { name?: string; type?: "php" | "cf"; endpoint?: string; domain?: string; password?: string };
+type ProviderPatch = { name?: string; type?: TempProviderType; endpoint?: string; domain?: string; password?: string; accountId?: string };
 
 type Props = {
   tempProviders: TempProviderPublic[];
-  onAddTempProvider: (input: { name: string; type: "php" | "cf"; endpoint: string; domain: string; password: string }) => void | Promise<void>;
+  onAddTempProvider: (input: { name: string; type: TempProviderType; endpoint: string; domain: string; password: string; accountId?: string }) => void | Promise<void>;
   onUpdateTempProvider: (id: string, patch: ProviderPatch) => void | Promise<void>;
   onDeleteTempProvider: (id: string) => void;
   onOpenTempProvider: (id: string) => void;
@@ -28,9 +28,10 @@ export function TempSourcesCard({
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [type, setType] = useState<"php" | "cf">("php");
+  const [type, setType] = useState<TempProviderType>("php");
   const [endpoint, setEndpoint] = useState("");
   const [domain, setDomain] = useState("");
+  const [accountId, setAccountId] = useState("");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -40,10 +41,10 @@ export function TempSourcesCard({
   const editingProvider = editingExisting ? tempProviders.find((p) => p.id === editingId) : undefined;
 
   function openAdd() {
-    setEditingId(NEW); setName(""); setType("php"); setEndpoint(""); setDomain(""); setPassword(""); setShowPwd(false);
+    setEditingId(NEW); setName(""); setType("php"); setEndpoint(""); setDomain(""); setAccountId(""); setPassword(""); setShowPwd(false);
   }
   function openEdit(p: TempProviderPublic) {
-    setEditingId(p.id); setName(p.name); setType(p.type); setEndpoint(p.endpoint); setDomain(p.domain); setPassword(""); setShowPwd(false);
+    setEditingId(p.id); setName(p.name); setType(p.type); setEndpoint(p.endpoint); setDomain(p.domain); setAccountId(p.accountId ?? ""); setPassword(""); setShowPwd(false);
   }
   function cancel() { setEditingId(null); setShowPwd(false); }
 
@@ -66,10 +67,11 @@ export function TempSourcesCard({
     try {
       if (editingId === NEW) {
         if (!password.trim()) { onError(L("新源必须填管理员密码", "Password required for a new source")); setBusy(false); return; }
-        await onAddTempProvider({ name: name.trim(), type, endpoint: endpoint.trim(), domain: domain.trim(), password });
+        await onAddTempProvider({ name: name.trim(), type, endpoint: endpoint.trim(), domain: domain.trim(), password, accountId: type === "icloud" ? accountId.trim() : undefined });
       } else if (editingId) {
         const patch: ProviderPatch = { name: name.trim(), type, endpoint: endpoint.trim(), domain: domain.trim() };
         if (password.trim()) patch.password = password;
+        if (type === "icloud") patch.accountId = accountId.trim();
         await onUpdateTempProvider(editingId, patch);
       }
       setEditingId(null); setPassword("");
@@ -95,22 +97,31 @@ export function TempSourcesCard({
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder={L("如 edu2", "e.g. edu2")} />
         </label>
         <label><span>{L("类型", "Type")}</span>
-          <select value={type} onChange={(e) => setType(e.target.value as "php" | "cf")}>
+          <select value={type} onChange={(e) => setType(e.target.value as TempProviderType)}>
             <option value="php">php — {L("自建 PHP 临时邮箱", "self-hosted PHP")}</option>
             <option value="cf">cf — cloudflare_temp_email</option>
+            <option value="icloud">iCloud</option>
           </select>
         </label>
         <label className="wide"><span>{L("接口地址", "Endpoint")}</span>
           <input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} spellCheck={false}
-            placeholder={type === "php" ? "https://x.xyz/api.php" : "https://x.workers.dev"} />
+            placeholder={type === "php" ? "https://x.xyz/api.php" : type === "icloud" ? L("icloud-hme 服务地址，如 http://127.0.0.1:8100", "icloud-hme service URL, e.g. http://127.0.0.1:8100") : "https://x.workers.dev"} />
         </label>
         <label><span>{L("域名", "Domain")}</span>
           <input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="x.xyz" spellCheck={false} />
         </label>
+        {type === "icloud" && (
+          <label><span>{L("iCloud 账号 (account_id)", "iCloud account (account_id)")}</span>
+            <input value={accountId} onChange={(e) => setAccountId(e.target.value)} spellCheck={false}
+              placeholder={L("留空=用默认账号", "blank = default account")} />
+          </label>
+        )}
         <label><span>
           {type === "cf"
             ? L("管理员 auth（x-admin-auth 口令）", "Admin auth (x-admin-auth)")
-            : L("管理员密码（X-Admin-Password）", "Admin password (X-Admin-Password)")}
+            : type === "icloud"
+              ? L("服务密码 (GATE_PASSWORD)", "Service password (GATE_PASSWORD)")
+              : L("管理员密码（X-Admin-Password）", "Admin password (X-Admin-Password)")}
           {editingExisting && editingProvider?.hasPassword && (
             <button type="button" className="mini-link" onClick={revealCurrentPwd}>
               {showPwd ? L("🙈 遮罩", "🙈 hide") : L("👁 显示当前", "👁 show current")}
@@ -159,7 +170,7 @@ export function TempSourcesCard({
             return (
               <div key={p.id} className={`src-item ${isEditing ? "editing" : ""}`}>
                 <div className="src-row" onClick={() => (isEditing ? cancel() : openEdit(p))}>
-                  <span className={`src-type ${p.type}`}>{p.type === "cf" ? "cloudflare" : "php"}</span>
+                  <span className={`src-type ${p.type}`}>{p.type === "cf" ? "cloudflare" : p.type === "icloud" ? "iCloud" : "php"}</span>
                   <div className="src-main">
                     <span className="src-domain">{p.domain || p.name}</span>
                     <span className="src-meta">{p.name} · {p.endpoint.replace(/^https?:\/\//, "")}</span>

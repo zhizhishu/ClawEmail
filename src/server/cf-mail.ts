@@ -132,10 +132,54 @@ function cfMap(m: any, alias: string): CfMessageSummary {
   };
 }
 
+/* ===================== icloud 类型（icloud-hme Go 服务壳） ===================== */
+// 全部 /api/* 走 Basic Auth（user 固定 "claw"，pass = provider.password）；
+// 返回统一 {success,data} 或 {success:false,message}——success=false 或非 2xx 一律抛，成功返回 data。
+async function icloudApi<T = any>(
+  provider: TempProvider,
+  method: "GET" | "POST" | "DELETE",
+  path: string,
+  body?: unknown
+): Promise<T> {
+  const base = provider.endpoint.replace(/\/+$/, "");
+  const auth = Buffer.from(`claw:${provider.password}`).toString("base64");
+  const headers: Record<string, string> = { Authorization: `Basic ${auth}` };
+  const init: RequestInit = { method, headers };
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(body);
+  }
+  const res = await fetch(base + path, init);
+  const text = await res.text();
+  let j: any = null;
+  try { j = text ? JSON.parse(text) : null; } catch { /* */ }
+  if (!res.ok || (j && j.success === false)) {
+    throw new Error((j && (j.message || j.error)) || `icloud HTTP ${res.status}`);
+  }
+  return (j?.data) as T;
+}
+
+// 取多账号 account_id：优先 provider.accountId，否则 /api/accounts 取第一个；都取不到抛。
+async function icloudAccountId(provider: TempProvider): Promise<string> {
+  if (provider.accountId) return provider.accountId;
+  const accounts = await icloudApi<Array<{ id: string }> | null>(provider, "GET", "/api/accounts");
+  const id = accounts?.[0]?.id;
+  if (!id) throw new Error("未配置 iCloud 账号");
+  return String(id);
+}
+
 /* ===================== 对外统一接口（按 type 分流） ===================== */
-export function cfDomain(provider: TempProvider): string { return provider.domain; }
+export function cfDomain(provider: TempProvider): string {
+  if (provider.type === "icloud") return provider.domain || "icloud.com";
+  return provider.domain;
+}
 
 export async function cfStatus(provider: TempProvider): Promise<any> {
+  if (provider.type === "icloud") {
+    // GET /api/accounts 通即视为已连（失败抛，让面板显未连）
+    await icloudApi(provider, "GET", "/api/accounts");
+    return { domain: cfDomain(provider) };
+  }
   if (provider.type === "cf") {
     // 用只读 admin 端点 /admin/address 验证 x-admin-auth（200=通）。
     // ⚠ 不再 mint "healthcheck" 探针地址——那会往服务器地址表登记一条永久记录、反复污染列表
@@ -179,6 +223,20 @@ async function cfAdminList(provider: TempProvider): Promise<CfAlias[]> {
 }
 
 export async function cfListAliases(provider: TempProvider): Promise<CfAlias[]> {
+  if (provider.type === "icloud") {
+    const accountId = await icloudAccountId(provider);
+    const data = await icloudApi<{
+      aliases: Array<{ email: string; anonymousId: string; label?: string; active?: boolean; createdAt?: string }> | null;
+    }>(provider, "GET", `/api/aliases?account_id=${encodeURIComponent(accountId)}`);
+    return (data?.aliases || []).map((a) => ({
+      address: a.email,
+      local: (a.email || "").split("@")[0],
+      createdAt: a.createdAt ?? null,
+      forwardEnabled: false,
+      forwardTo: [],
+      id: a.anonymousId
+    }));
+  }
   if (provider.type === "cf") {
     // canonical /admin/address 是权威源，全量列；不可用才退回面板本地记账
     try {
@@ -192,6 +250,21 @@ export async function cfListAliases(provider: TempProvider): Promise<CfAlias[]> 
 }
 
 export async function cfInbox(provider: TempProvider, alias: string): Promise<CfMessageSummary[]> {
+  if (provider.type === "icloud") {
+    const accountId = await icloudAccountId(provider);
+    const data = await icloudApi<{
+      messages: Array<{ id: any; from?: string; to?: string; subject?: string; date?: string; preview?: string }> | null;
+    }>(provider, "GET", `/api/inbox?account_id=${encodeURIComponent(accountId)}&alias=${encodeURIComponent(alias)}&limit=50`);
+    return (data?.messages || []).map((m) => ({
+      uid: Number(m.id) || 0,
+      subject: m.subject ?? null,
+      from: m.from ?? null,
+      to: m.to ?? null,
+      date: m.date ?? null,
+      preview: m.preview ?? null,
+      messageId: String(m.id)
+    }));
+  }
   if (provider.type === "cf") {
     const local = localOf(alias);
     cfAddName(provider, local); // 看过即记账，方便列表
@@ -205,6 +278,11 @@ export async function cfInbox(provider: TempProvider, alias: string): Promise<Cf
 // 出口列表用：带全量正文(text+html)，对齐 canonical /api/parsed_mails（列表也给完整 parsed，而非 preview 截断）。
 // cf：一次 parsed_mails 全量本就含正文，零额外往返；php：摘要切片后逐封补全量。
 export async function cfInboxRich(provider: TempProvider, alias: string, limit: number, offset: number): Promise<CfMessageDetail[]> {
+  if (provider.type === "icloud") {
+    // icloud-hme 只给摘要（无正文/html），bodyText 用 preview 兜底，bodyHtml 恒 null
+    const summaries = (await cfInbox(provider, alias)).slice(offset, offset + limit);
+    return summaries.map((s) => ({ ...s, bodyText: s.preview ?? null, bodyHtml: null }));
+  }
   if (provider.type === "cf") {
     const mails = await cfReadParsed(provider, localOf(alias));
     return mails.slice(offset, offset + limit).map((m) => {
@@ -223,6 +301,7 @@ export async function cfInboxRich(provider: TempProvider, alias: string, limit: 
 }
 
 export async function cfSent(provider: TempProvider, alias: string): Promise<CfMessageSummary[]> {
+  if (provider.type === "icloud") return []; // icloud-hme 只收不发，无已发
   if (provider.type === "cf") return []; // cf 壳无已发
   const data = await phpApi<{ messages?: CfMessageSummary[] }>(provider, "external_sent", { query: { alias } });
   return data.messages ?? [];
@@ -246,6 +325,12 @@ export async function cfSearch(
 }
 
 export async function cfMessage(provider: TempProvider, alias: string, uid: number): Promise<CfMessageDetail> {
+  if (provider.type === "icloud") {
+    // icloud-hme 无单封详情口，拉 inbox 找 uid；正文用 preview 兜底
+    const s = (await cfInbox(provider, alias)).find((x) => Number(x.uid) === Number(uid));
+    if (!s) throw new Error("iCloud HME 未找到该邮件");
+    return { ...s, bodyText: s.preview ?? null, bodyHtml: null, recipientHint: alias };
+  }
   if (provider.type === "cf") {
     const mails = await cfReadParsed(provider, localOf(alias), 100);
     const m = mails.find((x) => Number(x.id) === Number(uid)) ?? {};
@@ -258,6 +343,24 @@ export async function cfMessage(provider: TempProvider, alias: string, uid: numb
 }
 
 export async function cfCreateAlias(provider: TempProvider, local: string): Promise<CfAlias> {
+  if (provider.type === "icloud") {
+    const accountId = await icloudAccountId(provider);
+    const data = await icloudApi<{ email: string; label: string; created_at: string; account_id: string }>(
+      provider,
+      "POST",
+      "/api/create",
+      { account_id: accountId, label: local }
+    );
+    // create 返回无 anonymousId（删除时再按 email 反查），故 id 留空
+    return {
+      address: data.email,
+      local: (data.email || "").split("@")[0],
+      createdAt: data.created_at,
+      id: undefined,
+      forwardEnabled: false,
+      forwardTo: []
+    };
+  }
   if (provider.type === "cf") {
     const r = await cfMint(provider, local);
     cfAddName(provider, localOf(r.address));
@@ -268,6 +371,20 @@ export async function cfCreateAlias(provider: TempProvider, local: string): Prom
 }
 
 export async function cfDeleteAlias(provider: TempProvider, local: string): Promise<void> {
+  if (provider.type === "icloud") {
+    // create 不回 anonymousId，删除前先按 email/local 在 /api/aliases 反查
+    const accountId = await icloudAccountId(provider);
+    const data = await icloudApi<{ aliases: Array<{ email: string; anonymousId: string }> | null }>(
+      provider,
+      "GET",
+      `/api/aliases?account_id=${encodeURIComponent(accountId)}`
+    );
+    const target = localOf(local);
+    const row = (data?.aliases || []).find((a) => a.email === local || localOf(a.email) === target);
+    if (!row) throw new Error("iCloud HME 未找到该别名");
+    await icloudApi(provider, "DELETE", `/api/aliases/${encodeURIComponent(row.anonymousId)}`, { account_id: accountId });
+    return;
+  }
   if (provider.type === "cf") {
     // canonical 删除：先按 local 在 /admin/address 反查数字 id，再 DELETE /admin/delete_address/:id。
     // （edu/roastalpha 的 cf.php shim 2026-06-27 已补齐此 canonical 端点；之前 cf 壳无删除口、只能清本地记账。）
@@ -297,6 +414,7 @@ export async function cfDeleteAlias(provider: TempProvider, local: string): Prom
 }
 
 export async function cfSend(provider: TempProvider, input: CfSendInput): Promise<any> {
+  if (provider.type === "icloud") throw new Error("iCloud HME 只收不发");
   if (provider.type === "cf") {
     // canonical cf 管理员发信：POST /admin/send_mail (x-admin-auth)，字段 {from_mail,to_mail,subject,content,is_html} → {status:"ok"}
     const res = await fetch(provider.endpoint.replace(/\/+$/, "") + "/admin/send_mail", {
@@ -322,12 +440,14 @@ export async function cfSend(provider: TempProvider, input: CfSendInput): Promis
 }
 
 export async function cfGlobalForwarding(provider: TempProvider): Promise<CfForwarding> {
+  if (provider.type === "icloud") return { enabled: false, forwardTo: [] };
   if (provider.type === "cf") return { enabled: false, forwardTo: [] };
   const data = await phpApi<{ forwarding: CfForwarding }>(provider, "external_global_forwarding");
   return data.forwarding;
 }
 
 export async function cfUpdateAliasForwarding(provider: TempProvider, address: string, enabled: boolean, forwardTo: string[]): Promise<CfAlias[]> {
+  if (provider.type === "icloud") throw new Error("iCloud HME 不支持转发设置");
   if (provider.type === "cf") throw new Error("cloudflare_temp_email 壳不支持转发设置");
   const data = await phpApi<{ aliases?: CfAlias[] }>(provider, "external_update_forwarding", {
     form: { address, enabled: enabled ? 1 : 0, forwardTo: forwardTo.join(",") }
@@ -336,6 +456,7 @@ export async function cfUpdateAliasForwarding(provider: TempProvider, address: s
 }
 
 export async function cfUpdateGlobalForwarding(provider: TempProvider, enabled: boolean, forwardTo: string[]): Promise<CfForwarding> {
+  if (provider.type === "icloud") throw new Error("iCloud HME 不支持转发设置");
   if (provider.type === "cf") throw new Error("cloudflare_temp_email 壳不支持转发设置");
   const data = await phpApi<{ forwarding: CfForwarding }>(provider, "external_update_global_forwarding", {
     form: { enabled: enabled ? 1 : 0, forwardTo: forwardTo.join(",") }

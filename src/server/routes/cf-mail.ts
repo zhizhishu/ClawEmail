@@ -58,17 +58,19 @@ const configSchema = z.object({
 });
 const addProviderSchema = z.object({
   name: z.string().min(1).max(40),
-  type: z.enum(["php", "cf"]).optional(),
+  type: z.enum(["php", "cf", "icloud"]).optional(),
   endpoint: z.string().url(),
   domain: z.string().optional(),
-  password: z.string().min(1)
+  password: z.string().min(1),
+  accountId: z.string().optional()
 });
 const patchProviderSchema = z.object({
   name: z.string().min(1).max(40).optional(),
-  type: z.enum(["php", "cf"]).optional(),
+  type: z.enum(["php", "cf", "icloud"]).optional(),
   endpoint: z.string().url().optional(),
   domain: z.string().optional(),
-  password: z.string().optional()
+  password: z.string().optional(),
+  accountId: z.string().optional()
 });
 
 function toPublic(p: TempProvider): TempProviderPublic {
