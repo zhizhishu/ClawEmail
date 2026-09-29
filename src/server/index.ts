@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ZodError } from "zod";
 import { config } from "./config";
+import { EngineHttpError } from "./cf-mail";
 import "./db";
 import { mailboxRoutes } from "./routes/mailboxes";
 import { mailRoutes } from "./routes/mails";
@@ -56,6 +57,10 @@ app.addHook("onRequest", async (request, reply) => {
 app.setErrorHandler((error, _request, reply) => {
   if (error instanceof ZodError) {
     return reply.code(400).send({ error: "invalid input", details: error.issues });
+  }
+  // icloud 引擎业务性 4xx：同状态码透传引擎信封（code 加 ENGINE_ 前缀，message 原样）
+  if (error instanceof EngineHttpError) {
+    return reply.code(error.status).send({ success: false, code: `ENGINE_${error.code}`, message: error.message });
   }
   app.log.error(error);
   return reply.code(500).send({

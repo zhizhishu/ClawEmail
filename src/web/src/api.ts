@@ -109,7 +109,7 @@ async function requestJson<T>(
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    throw new Error(data?.error ?? `HTTP ${response.status}`);
+    throw new Error(data?.error ?? data?.message ?? `HTTP ${response.status}`);
   }
   return data as T;
 }

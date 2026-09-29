@@ -29,6 +29,8 @@ import {
 } from "../cf-mail";
 
 const aliasQuery = z.object({ alias: z.string().min(1), provider: z.string().optional() });
+// inbox 专用：alias 可空/缺省 = 整个收件箱（icloud 引擎 ListInbox）；sent 等仍须具体别名
+const inboxQuery = z.object({ alias: z.string().optional(), provider: z.string().optional() });
 const messageQuery = z.object({ alias: z.string().min(1), uid: z.coerce.number().int(), provider: z.string().optional() });
 const providerQuery = z.object({ provider: z.string().optional() });
 const createAliasSchema = z.object({ local: z.string().min(1).max(64), provider: z.string().optional() });
@@ -155,10 +157,10 @@ export async function cfMailRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/cf/inbox", async (request, reply) => {
-    const query = aliasQuery.parse(request.query);
+    const query = inboxQuery.parse(request.query);
     const provider = getProvider(query.provider);
     if (!provider) return reply.code(400).send({ error: "temp-mail provider is not configured" });
-    return { items: await cfInbox(provider, query.alias) };
+    return { items: await cfInbox(provider, query.alias ?? "") };
   });
 
   app.get("/api/cf/sent", async (request, reply) => {

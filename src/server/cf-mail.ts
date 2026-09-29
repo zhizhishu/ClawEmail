@@ -135,6 +135,21 @@ function cfMap(m: any, alias: string): CfMessageSummary {
 /* ===================== icloud 类型（icloud-hme Go 服务壳） ===================== */
 // 全部 /api/* 走 Basic Auth（user 固定 "claw"，pass = provider.password）；
 // 返回统一 {success,data} 或 {success:false,message}——success=false 或非 2xx 一律抛，成功返回 data。
+
+// 引擎业务性 4xx（错误信封 {success:false,code,message}）：带引擎原始状态码抛出，
+// 由 server/index.ts 全局 errorHandler 映射成同状态码 4xx 响应（message 原样透传）。
+// 5xx / 网络错误仍抛普通 Error → 500。
+export class EngineHttpError extends Error {
+  readonly status: number;
+  readonly code: string;
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.name = "EngineHttpError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 async function icloudApi<T = any>(
   provider: TempProvider,
   method: "GET" | "POST" | "DELETE",
@@ -154,6 +169,15 @@ async function icloudApi<T = any>(
   let j: any = null;
   try { j = text ? JSON.parse(text) : null; } catch { /* */ }
   if (!res.ok || (j && j.success === false)) {
+    // 引擎业务性 4xx + 错误信封：带 status/code/message 抛，路由层透传同状态码；
+    // 其余（5xx、网络错误、非信封 4xx）仍走普通 Error → 500。
+    if (res.status >= 400 && res.status < 500 && j && j.success === false) {
+      throw new EngineHttpError(
+        res.status,
+        String(j.code ?? "ERROR"),
+        String(j.message || j.error || `icloud HTTP ${res.status}`)
+      );
+    }
     throw new Error((j && (j.message || j.error)) || `icloud HTTP ${res.status}`);
   }
   return (j?.data) as T;
@@ -252,9 +276,11 @@ export async function cfListAliases(provider: TempProvider): Promise<CfAlias[]> 
 export async function cfInbox(provider: TempProvider, alias: string): Promise<CfMessageSummary[]> {
   if (provider.type === "icloud") {
     const accountId = await icloudAccountId(provider);
+    // alias 空/缺省 = 整个收件箱（引擎 ListInbox limit/days）；非空才按收件人过滤
+    const aliasParam = alias ? `&alias=${encodeURIComponent(alias)}` : "";
     const data = await icloudApi<{
       messages: Array<{ id: any; from?: string; to?: string; subject?: string; date?: string; preview?: string }> | null;
-    }>(provider, "GET", `/api/inbox?account_id=${encodeURIComponent(accountId)}&alias=${encodeURIComponent(alias)}&limit=50`);
+    }>(provider, "GET", `/api/inbox?account_id=${encodeURIComponent(accountId)}${aliasParam}&limit=50`);
     return (data?.messages || []).map((m) => ({
       uid: Number(m.id) || 0,
       subject: m.subject ?? null,
@@ -267,6 +293,7 @@ export async function cfInbox(provider: TempProvider, alias: string): Promise<Cf
   }
   if (provider.type === "cf") {
     const local = localOf(alias);
+    if (!local) return []; // cf 无「整个收件箱」概念（每址独立 jwt），空别名给空列表，避免 mint 出 ""@domain 垃圾地址
     cfAddName(provider, local); // 看过即记账，方便列表
     const mails = await cfReadParsed(provider, local);
     return mails.map((m) => cfMap(m, alias));
