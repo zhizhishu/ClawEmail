@@ -256,8 +256,9 @@ export async function cfListAliases(provider: TempProvider): Promise<CfAlias[]> 
       address: a.email,
       local: (a.email || "").split("@")[0],
       createdAt: a.createdAt ?? null,
-      forwardEnabled: false,
-      forwardTo: [],
+      // 引擎 active=HME 别名的转发开关(激活=转发到账号 iCloud 收件箱)
+      forwardEnabled: a.active === true,
+      forwardTo: a.active === true ? ["iCloud 收件箱"] : [],
       id: a.anonymousId
     }));
   }
