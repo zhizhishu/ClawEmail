@@ -385,8 +385,9 @@ export async function cfCreateAlias(provider: TempProvider, local: string): Prom
       local: (data.email || "").split("@")[0],
       createdAt: data.created_at,
       id: undefined,
-      forwardEnabled: false,
-      forwardTo: []
+      // HME 新建别名默认激活(转发到账号 iCloud 收件箱)
+      forwardEnabled: true,
+      forwardTo: ["iCloud 收件箱"]
     };
   }
   if (provider.type === "cf") {
