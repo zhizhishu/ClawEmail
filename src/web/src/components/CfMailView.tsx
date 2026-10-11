@@ -68,6 +68,8 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [sendBusy, setSendBusy] = useState(false);
+  // iCloud 发信地址(引擎 SMTP 腿):可用账号主地址或邮件别名;记住上次用的
+  const [fromAddr, setFromAddr] = useState(() => localStorage.getItem("clawemail:icloud:from") || "");
 
   const [fwdOpen, setFwdOpen] = useState(false);
   const [fwdBusy, setFwdBusy] = useState(false);
@@ -330,11 +332,15 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
       .split(/[,\s]+/)
       .map((x) => x.trim())
       .filter(Boolean);
-    if (!selectedAlias || toList.length === 0) return;
+    if (toList.length === 0) return;
+    // iCloud:发件地址用独立输入(引擎 SMTP,可留空=账号主地址);其余源:选中别名
+    if (!isIcloud && !selectedAlias) return;
+    const from = isIcloud ? fromAddr.trim() : aliasAddress(selectedAlias);
+    if (isIcloud) localStorage.setItem("clawemail:icloud:from", from);
     setSendBusy(true);
     try {
       await sendCfMail({
-        from: aliasAddress(selectedAlias),
+        from,
         to: toList,
         subject,
         body,
@@ -474,15 +480,13 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
         <button onClick={() => loadInbox()} disabled={!selectedAlias || busy}>
           {busy ? L("加载中…", "loading…") : L("↻ 刷新", "↻ refresh")}
         </button>
-        {!isIcloud && (
-          <button
-            className="primary"
-            onClick={() => setComposeOpen((v) => !v)}
-            disabled={!selectedAlias}
-          >
-            {L("写信", "Compose")}
-          </button>
-        )}
+        <button
+          className="primary"
+          onClick={() => setComposeOpen((v) => !v)}
+          disabled={!isIcloud && !selectedAlias}
+        >
+          {L("写信", "Compose")}
+        </button>
         {!isIcloud && (
           <button
             className={fwdOpen ? "active" : ""}
@@ -521,13 +525,22 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
         </button>
       </div>
 
-      {!isIcloud && composeOpen && (
+      {composeOpen && (
         <div className="reply-box" style={{ marginBottom: 14 }}>
           <div className="head">
             <span className="label">
-              {L("从", "From")} {aliasAddress(selectedAlias)}
+              {isIcloud ? L("从（iCloud 发信）", "From (iCloud SMTP)") : `${L("从", "From")} ${aliasAddress(selectedAlias)}`}
             </span>
           </div>
+          {isIcloud && (
+            <input
+              value={fromAddr}
+              onChange={(e) => setFromAddr(e.target.value)}
+              placeholder={L("发件地址（@icloud.com 主地址或别名，留空=主地址）", "from address (@icloud.com)")}
+              spellCheck={false}
+              style={{ width: "100%", marginBottom: 8 }}
+            />
+          )}
           <input
             value={to}
             onChange={(e) => setTo(e.target.value)}

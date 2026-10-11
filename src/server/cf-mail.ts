@@ -443,7 +443,21 @@ export async function cfDeleteAlias(provider: TempProvider, local: string): Prom
 }
 
 export async function cfSend(provider: TempProvider, input: CfSendInput): Promise<any> {
-  if (provider.type === "icloud") throw new Error("iCloud HME 只收不发");
+  if (provider.type === "icloud") {
+    // 引擎 SMTP 腿(App 专用密码,直连优先/代理回落):from 可用账号主地址或邮件别名
+    const accountId = await icloudAccountId(provider);
+    await icloudApi(provider, "POST", "/api/send", {
+      account_id: accountId,
+      from: input.from,
+      to: input.to,
+      cc: [],
+      bcc: [],
+      subject: input.subject ?? "",
+      body: input.body ?? "",
+      html: Boolean(input.html)
+    });
+    return { status: "ok" };
+  }
   if (provider.type === "cf") {
     // canonical cf 管理员发信：POST /admin/send_mail (x-admin-auth)，字段 {from_mail,to_mail,subject,content,is_html} → {status:"ok"}
     const res = await fetch(provider.endpoint.replace(/\/+$/, "") + "/admin/send_mail", {

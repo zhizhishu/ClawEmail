@@ -35,7 +35,8 @@ const messageQuery = z.object({ alias: z.string().min(1), uid: z.coerce.number()
 const providerQuery = z.object({ provider: z.string().optional() });
 const createAliasSchema = z.object({ local: z.string().min(1).max(64), provider: z.string().optional() });
 const sendSchema = z.object({
-  from: z.string().min(1),
+  // iCloud 源可留空(引擎默认账号主地址);CF/php 源由 UI 填选中别名
+  from: z.string().default(""),
   to: z.array(z.string().email()).min(1),
   subject: z.string().optional(),
   body: z.string().optional(),
