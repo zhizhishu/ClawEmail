@@ -2858,3 +2858,32 @@ h1, h2, h3, .settings-head h3, .detail-head h2, .compose-head h2, .lc-hero h1 {
   background: var(--surface); border-radius: 5px; padding: 0 4px; margin-right: 2px;
   box-shadow: var(--shadow-sm);
 }
+
+/* ---------- AliasPicker：可搜索的别名选择器（替代原生 select） ---------- */
+.alias-picker { position: relative; min-width: 240px; flex: 1 1 240px; }
+.alias-picker .ap-field { position: relative; display: flex; align-items: center; }
+.alias-picker .ap-field input { width: 100%; padding-right: 44px; }
+.alias-picker .ap-count {
+  position: absolute; right: 10px; font-size: 10.5px; font-weight: 700;
+  color: var(--text-4); background: var(--surface); border-radius: 999px;
+  padding: 1px 7px; pointer-events: none; box-shadow: var(--shadow-sm);
+}
+.alias-picker .ap-panel {
+  position: absolute; left: 0; right: 0; top: calc(100% + 8px); z-index: 45;
+  background: var(--surface); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg); padding: 6px;
+  max-height: min(46vh, 380px); overflow-y: auto;
+  animation: ap-pop 140ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes ap-pop { from { opacity: 0; transform: translateY(-5px) scale(0.99); } to { opacity: 1; transform: none; } }
+.alias-picker .ap-item {
+  display: block; width: 100%; text-align: left; padding: 8px 12px;
+  border: none; border-radius: 13px; background: transparent;
+  cursor: pointer; color: var(--text); transition: background 120ms ease, box-shadow 120ms ease;
+}
+.alias-picker .ap-item.on { background: var(--surface); box-shadow: var(--clay-inset); }
+.alias-picker .ap-item.cur .ap-addr { font-weight: 800; }
+.alias-picker .ap-addr { font-size: 12.5px; overflow-wrap: anywhere; }
+.alias-picker .ap-empty {
+  padding: 14px 12px; font-size: 12px; color: var(--text-4); text-align: center;
+}

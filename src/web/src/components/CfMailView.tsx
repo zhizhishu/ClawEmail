@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { wrapEmailHtml } from "../email-html";
+import { AliasPicker } from "./AliasPicker";
 import {
   clearCfConfig,
   createCfAlias,
@@ -469,14 +471,12 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
             ))}
           </select>
         )}
-        <select value={selectedAlias} onChange={(e) => setSelectedAlias(e.target.value)}>
-          <option value="">{L("— 选择别名 —", "— select alias —")}</option>
-          {aliases.map((a) => (
-            <option key={a.local} value={a.local}>
-              {a.address}
-            </option>
-          ))}
-        </select>
+        <AliasPicker
+          aliases={aliases}
+          value={selectedAlias}
+          onChange={setSelectedAlias}
+          lang={lang}
+        />
         <button onClick={() => loadInbox()} disabled={!selectedAlias || busy}>
           {busy ? L("加载中…", "loading…") : L("↻ 刷新", "↻ refresh")}
         </button>
@@ -717,7 +717,19 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
               <div className="detail-body">
                 {selected.bodyHtml ? (
                   <div className="frame">
-                    <iframe title="cf-mail-html" srcDoc={selected.bodyHtml} />
+                    <iframe
+                      title="cf-mail-html"
+                      sandbox="allow-same-origin"
+                      referrerPolicy="no-referrer"
+                      srcDoc={wrapEmailHtml(selected.bodyHtml)}
+                      onLoad={(e) => {
+                        const f = e.currentTarget;
+                        try {
+                          const h = f.contentDocument?.body?.scrollHeight;
+                          if (h) f.style.height = `${Math.min(h + 28, 4000)}px`;
+                        } catch { /* 跨域兜底：保持 min-height */ }
+                      }}
+                    />
                   </div>
                 ) : (
                   <pre>{selected.bodyText || selected.preview || L("（空）", "(empty)")}</pre>

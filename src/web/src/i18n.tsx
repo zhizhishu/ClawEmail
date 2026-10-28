@@ -471,11 +471,17 @@ type PrefsCtx = {
 const Ctx = createContext<PrefsCtx | null>(null);
 
 function readLang(): Lang {
-  if (typeof localStorage === "undefined") return "en";
-  const saved = localStorage.getItem("lang");
-  if (saved === "zh" || saved === "en") return saved;
-  const browser = (navigator.language || "").toLowerCase();
-  return browser.startsWith("zh") ? "zh" : "en";
+  // 1) 用户手动切换过 -> 尊重保存值
+  if (typeof localStorage !== "undefined") {
+    const saved = localStorage.getItem("lang");
+    if (saved === "zh" || saved === "en") return saved;
+  }
+  // 2) 没手动切过 -> 跟随系统语言（看 navigator.languages 整个列表，zh-* 都算中文）
+  if (typeof navigator === "undefined") return "en";
+  const list = navigator.languages && navigator.languages.length
+    ? navigator.languages
+    : [navigator.language || ""];
+  return list.some((l) => (l || "").toLowerCase().startsWith("zh")) ? "zh" : "en";
 }
 
 function readTheme(): Theme {
@@ -499,7 +505,7 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
-    localStorage.setItem("lang", lang);
+    // 不在此持久化：否则首屏会把"跟随系统"的判定钉死，之后改系统语言不再跟随
   }, [lang]);
 
   useEffect(() => {
@@ -508,6 +514,11 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
+  function setLang(next: Lang) {
+    setLangState(next);
+    try { localStorage.setItem("lang", next); } catch { /* 隐私模式忽略 */ }
+  }
+
   function t(key: string, vars?: Record<string, string | number>): string {
     const text = DICT[lang][key] ?? DICT.en[key] ?? key;
     return format(text, vars);
@@ -515,8 +526,8 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
 
   const value: PrefsCtx = {
     lang,
-    setLang: setLangState,
-    toggleLang: () => setLangState(lang === "en" ? "zh" : "en"),
+    setLang: setLang,
+    toggleLang: () => setLang(lang === "en" ? "zh" : "en"),
     theme,
     setTheme: setThemeState,
     toggleTheme: () => setThemeState(theme === "dark" ? "light" : "dark"),
