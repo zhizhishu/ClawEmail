@@ -10,6 +10,7 @@
 //          ⚠ cfMint 依赖 new_address 同名幂等刷 jwt；真 canonical admin/new_address 对已存在地址可能非幂等，
 //            待 roastalpha-cf 上线后改走 /admin/show_password/:id 或 /admin/mails?address= 实测校准。
 import type { TempProvider } from "./temp-providers";
+import { retryAsync } from "./http-retry";
 import { getSetting, setSetting } from "./db";
 
 export type CfAlias = {
@@ -98,15 +99,20 @@ async function cfMint(provider: TempProvider, local: string): Promise<{ address:
   return { address: j.address || fullAddr(provider, local), jwt: j.jwt, addressId: j.address_id };
 }
 
+// 读解析信。上游并发下会偶发 "service not seeded"（seed 竞态）或 5xx，
+// 故整段（mint + 读）包重试：每次重试都重新 mint，等于重新 seed。
+// mint 走 new_address 同名幂等、读是 GET，两者都安全可重试。
 async function cfReadParsed(provider: TempProvider, local: string, limit = 50): Promise<any[]> {
-  const { jwt } = await cfMint(provider, local);
-  const res = await fetch(provider.endpoint.replace(/\/+$/, "") + `/api/parsed_mails?limit=${limit}`, {
-    headers: { authorization: `Bearer ${jwt}` }
+  return retryAsync(async () => {
+    const { jwt } = await cfMint(provider, local);
+    const res = await fetch(provider.endpoint.replace(/\/+$/, "") + `/api/parsed_mails?limit=${limit}`, {
+      headers: { authorization: `Bearer ${jwt}` }
+    });
+    const text = await res.text();
+    let j: any = null; try { j = JSON.parse(text); } catch { /* */ }
+    if (!res.ok) throw new Error(j?.error || j?.message || `cf parsed_mails HTTP ${res.status}`);
+    return Array.isArray(j) ? j : (j?.results ?? j?.mails ?? []);
   });
-  const text = await res.text();
-  let j: any = null; try { j = JSON.parse(text); } catch { /* */ }
-  if (!res.ok) throw new Error(j?.error || j?.message || `cf parsed_mails HTTP ${res.status}`);
-  return Array.isArray(j) ? j : (j?.results ?? j?.mails ?? []);
 }
 
 // canonical cf parsed 字段：{id, message_id, sender, source, subject, text, html, address, created_at, attachments}
