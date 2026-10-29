@@ -307,6 +307,24 @@ export async function fetchIcloudBodies(uids: number[], options: FetchOptions = 
   return { bodies: result.bodies, status: result.status, failed, reason: undefined };
 }
 
+/** 自检：面板在运行环境里到底看到了什么（不回传任何凭据明文）。 */
+export function icloudImapConfig() {
+  const c = creds();
+  const env = (k: string) => (process.env[k] ?? "").length;
+  return {
+    hasCreds: c !== null,
+    emailLen: env("ICLOUD_EMAIL") || env("ICLOUD_IMAP_EMAIL"),
+    passLen: env("ICLOUD_APP_PASSWORD") || env("ICLOUD_IMAP_APP_PASSWORD"),
+    socksLen: env("SOCKS_PROXY") || env("ICLOUD_IMAP_SOCKS"),
+    proxyConfigured: Boolean(proxyUrl()),
+    relayPort,
+    host: process.env.ICLOUD_IMAP_HOST || "imap.mail.me.com",
+    port: Number(process.env.ICLOUD_IMAP_PORT || 993),
+    connectTimeoutMs: CONNECT_TIMEOUT_MS,
+    cacheEntries: cache.size
+  };
+}
+
 /** 取单封正文（内部复用批量实现）。 */
 export async function fetchIcloudBody(uid: number, options: FetchOptions = {}): Promise<IcloudBody | null> {
   const r = await fetchIcloudBodies([uid], options);

@@ -3,6 +3,7 @@
 // 旧的 /api/cf/config 仍在，作用于「主 provider」（向后兼容现有 edu 的连接表单）。
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { fetchIcloudBodies, icloudImapConfig } from "../icloud-imap";
 import { clearCfConfig, getCfConfigStatus, saveCfConfig } from "../runtime-config";
 import {
   addProvider,
@@ -155,6 +156,27 @@ export async function cfMailRoutes(app: FastifyInstance): Promise<void> {
     const { local } = request.params as { local: string };
     await cfDeleteAlias(provider, local);
     return { success: true };
+  });
+
+  // iCloud 直连 IMAP 自检：把运行环境里看到的东西如实吐出来（不含任何凭据明文）。
+  app.get("/api/cf/icloud-imap-selftest", async (request, reply) => {
+    const q = request.query as { uid?: string; provider?: string };
+    const uid = Number(q.uid ?? 0);
+    const config = icloudImapConfig();
+    if (!uid) return { config, note: "传 ?uid=<数字> 才会真连一次 IMAP" };
+    const provider = q.provider ? getProvider(q.provider) : undefined;
+    const r = await fetchIcloudBodies([uid], { expectedEmail: null });
+    const body = r.bodies.get(uid);
+    return {
+      config,
+      provider: provider ? { id: provider.id, type: provider.type, accountId: provider.accountId ?? null } : null,
+      status: r.status,
+      reason: r.reason ?? null,
+      fetched: r.bodies.size,
+      textLen: body?.text?.length ?? 0,
+      htmlLen: body?.html?.length ?? 0,
+      failed: Object.fromEntries(r.failed)
+    };
   });
 
   app.get("/api/cf/inbox", async (request, reply) => {
