@@ -339,9 +339,10 @@ export async function icloudEngineLogin(
   otpCode?: string
 ): Promise<unknown> {
   const accountId = await icloudAccountId(provider);
+  // 引擎侧结构体标签是 json:"otp_code"（下划线）；传 otpCode 会被忽略，表现为"需要提供 OTP 验证码"
   return icloudApi<unknown>(provider, "POST", `/api/accounts/${encodeURIComponent(accountId)}/login`, {
     password,
-    otpCode: otpCode || undefined
+    otp_code: otpCode || undefined
   });
 }
 
