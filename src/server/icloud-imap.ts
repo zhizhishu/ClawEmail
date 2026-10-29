@@ -15,7 +15,9 @@
 // 说明：UIDVALIDITY 是 UID 复用的真正判据，但引擎摘要不提供，这里无法校验；
 // 账户身份绑定是当前条件下能做到的最强一致性保证。
 
+import net from "node:net";
 import { ImapFlow } from "imapflow";
+import { SocksClient } from "socks";
 import { simpleParser } from "mailparser";
 
 export type IcloudBody = { text: string | null; html: string | null };
@@ -130,15 +132,71 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
-function newClient(c: Creds): ImapFlow {
-  return new ImapFlow({
-    host: process.env.ICLOUD_IMAP_HOST || "imap.mail.me.com",
-    port: Number(process.env.ICLOUD_IMAP_PORT || 993),
-    secure: true,
+// ---------- SOCKS5 中继（HF Space 出站 993 被拦时用）----------
+// 只做 TCP 转发，不在本地终结 TLS：imapflow 仍与 imap.mail.me.com 直接握手，
+// 通过 tls.servername 指定 SNI 保住证书校验，链路是端到端的。
+let relayPort: number | null = null;
+
+function proxyUrl(): string {
+  return (process.env.ICLOUD_IMAP_SOCKS || process.env.SOCKS_PROXY || "").trim();
+}
+
+async function ensureRelay(): Promise<number | null> {
+  const raw = proxyUrl();
+  if (!raw) return null;
+  if (relayPort) return relayPort;
+  let proxy: URL;
+  try { proxy = new URL(raw); } catch { return null; }
+  const targetHost = process.env.ICLOUD_IMAP_HOST || "imap.mail.me.com";
+  const targetPort = Number(process.env.ICLOUD_IMAP_PORT || 993);
+
+  const server = net.createServer((client) => {
+    SocksClient.createConnection({
+      proxy: {
+        host: proxy.hostname,
+        port: Number(proxy.port) || 1080,
+        type: 5,
+        userId: proxy.username ? decodeURIComponent(proxy.username) : undefined,
+        password: proxy.password ? decodeURIComponent(proxy.password) : undefined
+      },
+      command: "connect",
+      destination: { host: targetHost, port: targetPort }
+    })
+      .then(({ socket }) => {
+        client.pipe(socket).pipe(client);
+        socket.on("error", () => client.destroy());
+        client.on("error", () => socket.destroy());
+      })
+      .catch(() => client.destroy());
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const addr = server.address();
+  relayPort = typeof addr === "object" && addr ? addr.port : null;
+  return relayPort;
+}
+
+function newClient(c: Creds, viaRelayPort: number | null): ImapFlow {
+  const host = process.env.ICLOUD_IMAP_HOST || "imap.mail.me.com";
+  const base = {
+    secure: true as const,
     auth: { user: c.user, pass: c.pass },
-    logger: false,
+    logger: false as const,
     greetingTimeout: CONNECT_TIMEOUT_MS,
     socketTimeout: OVERALL_TIMEOUT_MS
+  };
+  if (viaRelayPort) {
+    // 经本地 SOCKS 中继：连 127.0.0.1，但 SNI 仍与真实主机名握手，证书校验照旧
+    return new ImapFlow({
+      ...base,
+      host: "127.0.0.1",
+      port: viaRelayPort,
+      tls: { servername: host }
+    } as never);
+  }
+  return new ImapFlow({
+    ...base,
+    host,
+    port: Number(process.env.ICLOUD_IMAP_PORT || 993)
   });
 }
 
@@ -196,7 +254,7 @@ export async function fetchIcloudBodies(uids: number[], options: FetchOptions = 
     }
     if (todo.length === 0) return { bodies, localFailed, status: "ok" as IcloudBodyStatus };
 
-    const client = newClient(c);
+    const client = newClient(c, await ensureRelay());
     let lock: { release: () => void } | null = null;
     try {
       await withTimeout(client.connect(), CONNECT_TIMEOUT_MS, "IMAP 连接");
