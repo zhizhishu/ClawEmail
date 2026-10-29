@@ -66,6 +66,8 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
   );
   const [newLocal, setNewLocal] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
+
+  // ESC 关闭写邮件弹层
   const [to, setTo] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -365,6 +367,18 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
   const curType = providers.find((p) => p.id === (providerId ?? providers[0]?.id))?.type;
   const isIcloud = curType === "icloud";
 
+  useEffect(() => {
+    if (!composeOpen && !fwdOpen && !cfgOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (composeOpen) setComposeOpen(false);
+      else if (fwdOpen) setFwdOpen(false);
+      else if (cfgOpen) setCfgOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [composeOpen, fwdOpen, cfgOpen]);
+
   const configForm = (
     <div className="cf-config">
       <div className="cf-config-grid">
@@ -487,7 +501,7 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
         >
           {L("写信", "Compose")}
         </button>
-        {!isIcloud && (
+        {curType === "php" && (
           <button
             className={fwdOpen ? "active" : ""}
             onClick={() => setFwdOpen((v) => !v)}
@@ -498,11 +512,15 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
           </button>
         )}
         <button
-          className={cfgOpen ? "active" : ""}
+          className={`icon-btn toolbar-icon ${cfgOpen ? "active" : ""}`}
           onClick={() => setCfgOpen((v) => !v)}
           title={L("连接设置（主源）", "Connection settings")}
+          aria-label={L("连接设置", "Connection settings")}
         >
-          {L("连接", "Connection")}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
         </button>
         {selectedAlias && (
           <button className="danger" onClick={() => handleDeleteAlias(selectedAlias)}>
@@ -526,45 +544,99 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
       </div>
 
       {composeOpen && (
-        <div className="reply-box" style={{ marginBottom: 14 }}>
-          <div className="head">
-            <span className="label">
-              {isIcloud ? L("从（iCloud 发信）", "From (iCloud SMTP)") : `${L("从", "From")} ${aliasAddress(selectedAlias)}`}
-            </span>
-          </div>
-          {isIcloud && (
-            <input
-              value={fromAddr}
-              onChange={(e) => setFromAddr(e.target.value)}
-              placeholder={L("发件地址（@icloud.com 主地址或别名，留空=主地址）", "from address (@icloud.com)")}
-              spellCheck={false}
-              style={{ width: "100%", marginBottom: 8 }}
-            />
-          )}
-          <input
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            placeholder={L("收件人（逗号/空格分隔）", "to (comma/space separated)")}
-            style={{ width: "100%", marginBottom: 8 }}
-          />
-          <input
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            placeholder={L("主题", "subject")}
-            style={{ width: "100%", marginBottom: 8 }}
-          />
-          <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder={L("正文", "body")} />
-          <div className="row">
-            <span />
-            <button className="primary" onClick={handleSend} disabled={sendBusy || !to.trim()}>
-              {sendBusy ? L("发送中…", "sending…") : L("发送", "Send")}
-            </button>
+        <div className="compose-overlay" onClick={() => setComposeOpen(false)}>
+          <div
+            className="compose-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label={L("写邮件", "Compose")}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="compose-head">
+              <h2>
+                {L("写邮件", "Compose")}
+                <span className="dot-accent">.</span>
+              </h2>
+              <button className="icon-btn" onClick={() => setComposeOpen(false)} aria-label={L("关闭", "Close")}>
+                ×
+              </button>
+            </header>
+            <div className="compose-fields">
+              <div className="cf-row">
+                <span className="cf-k">{L("发件人", "From")}</span>
+                {isIcloud ? (
+                  <input
+                    value={fromAddr}
+                    onChange={(e) => setFromAddr(e.target.value)}
+                    placeholder={L("发件地址（留空 = 账号主地址）", "from address (empty = primary)")}
+                    spellCheck={false}
+                  />
+                ) : (
+                  <span className="cf-static">{aliasAddress(selectedAlias)}</span>
+                )}
+              </div>
+              <div className="cf-row">
+                <span className="cf-k">{L("收件人", "To")}</span>
+                <input
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  placeholder={L("逗号 / 空格分隔", "comma / space separated")}
+                  spellCheck={false}
+                  autoFocus
+                />
+              </div>
+              <div className="cf-row">
+                <span className="cf-k">{L("主题", "Subject")}</span>
+                <input
+                  className="cf-subj"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder={L("主题", "Subject")}
+                />
+              </div>
+            </div>
+            <div className="compose-body">
+              <textarea
+                className="compose-text"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder={L("正文", "Body")}
+              />
+            </div>
+            <footer className="compose-foot">
+              <button className="ghost" onClick={() => setComposeOpen(false)} disabled={sendBusy}>
+                {L("取消", "Cancel")}
+              </button>
+              <button className="primary" onClick={handleSend} disabled={sendBusy || !to.trim()}>
+                {sendBusy ? L("发送中…", "Sending…") : L("发送", "Send")}
+              </button>
+            </footer>
           </div>
         </div>
       )}
-
-      {!isIcloud && fwdOpen && (
-        <div className="fwd-panel" style={{ marginBottom: 14 }}>
+      {curType === "php" && fwdOpen && (
+        <div className="compose-overlay" onClick={() => setFwdOpen(false)}>
+          <div
+            className="compose-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label={L("转发设置", "Forwarding")}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="compose-head">
+              <h2>
+                {L("转发设置", "Forwarding")}
+                <span className="dot-accent">.</span>
+              </h2>
+              <button className="icon-btn" onClick={() => setFwdOpen(false)} aria-label={L("关闭", "Close")}>
+                ×
+              </button>
+            </header>
+            <div className="modal-scroll">
+        <div className="fwd-panel">
+          <p className="fwd-intro">
+            {L("转发的意思：收到的信，再复制一份送到你指定的另一个邮箱（比如你自己的 Gmail）。", "Forwarding means: incoming mail also gets a copy sent to another mailbox you choose (e.g. your own Gmail).")}
+          </p>
           <div className="fwd-row">
             <div className="fwd-head">
               <label className="fwd-toggle">
@@ -574,17 +646,17 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
                   disabled={!selectedAlias}
                   onChange={(e) => setAliasFwdEnabled(e.target.checked)}
                 />
-                <span>{L("此别名转发", "This alias")}</span>
+                <span>{L("只转发这一个地址", "Forward this address only")}</span>
               </label>
               <span className="fwd-target mono">
-                {selectedAlias ? aliasAddress(selectedAlias) : L("未选别名", "no alias")}
+                {selectedAlias ? aliasAddress(selectedAlias) : L("先选一个地址", "pick an address first")}
               </span>
             </div>
             <input
               value={aliasFwdTo}
               disabled={!selectedAlias}
               onChange={(e) => setAliasFwdTo(e.target.value)}
-              placeholder={L("转发到（逗号分隔，最多 5 个）", "forward to (comma sep, up to 5)")}
+              placeholder={L("接收转发的邮箱，多个用逗号隔开（最多 5 个）", "emails to forward to, comma separated (max 5)")}
             />
             <button onClick={saveAliasForwarding} disabled={fwdBusy || !selectedAlias}>
               {fwdBusy ? L("保存中…", "saving…") : L("保存", "Save")}
@@ -592,8 +664,8 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
           </div>
           <div className="fwd-hint">
             {L(
-              "收到的邮件会抄送到上面的地址，标题/正文会标明原始收件别名，方便区分来源。",
-              "Inbound mail is CC-forwarded to the targets above; the source alias is tagged so you know which mailbox it hit."
+              "开启后，凡是寄到这个地址的信，都会再复制一份发给你填的邮箱。复制出去的信，标题前面会带上原收件地址，方便你看清是哪封。",
+              "When on, every message sent to this address is also copied to the emails you list. The recipient address is prepended to the subject so you can tell which address it came in on."
             )}
           </div>
           <div className="fwd-divider" />
@@ -605,28 +677,64 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
                   checked={globalFwdEnabled}
                   onChange={(e) => setGlobalFwdEnabled(e.target.checked)}
                 />
-                <span>{L("全局转发", "All aliases")}</span>
+                <span>{L("整个域名一起转发", "Forward the whole domain")}</span>
               </label>
               <span className="fwd-target mono">@{domain || "…"}</span>
             </div>
             <input
               value={globalFwdTo}
               onChange={(e) => setGlobalFwdTo(e.target.value)}
-              placeholder={L("整组转发到（逗号分隔，最多 5 个）", "forward whole group to (comma sep, up to 5)")}
+              placeholder={L("接收转发的邮箱，多个用逗号隔开（最多 5 个）", "emails to forward to, comma separated (max 5)")}
             />
             <button onClick={saveGlobalForwarding} disabled={fwdBusy}>
               {fwdBusy ? L("保存中…", "saving…") : L("保存", "Save")}
             </button>
           </div>
         </div>
+            </div>
+            <footer className="compose-foot">
+              <button className="ghost" onClick={() => setFwdOpen(false)}>
+                {L("关闭", "Close")}
+              </button>
+            </footer>
+          </div>
+        </div>
       )}
 
-      {cfgOpen && <div style={{ marginBottom: 14 }}>{configForm}</div>}
+      {cfgOpen && (
+        <div className="compose-overlay" onClick={() => setCfgOpen(false)}>
+          <div
+            className="compose-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label={L("连接设置", "Connection settings")}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="compose-head">
+              <h2>
+                {L("连接设置", "Connection settings")}
+                <span className="dot-accent">.</span>
+              </h2>
+              <button className="icon-btn" onClick={() => setCfgOpen(false)} aria-label={L("关闭", "Close")}>
+                ×
+              </button>
+            </header>
+            <div className="modal-scroll">
+              {configForm}
+            </div>
+            <footer className="compose-foot">
+              <button className="ghost" onClick={() => setCfgOpen(false)}>
+                {L("关闭", "Close")}
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
 
       <div className="inbox" style={{ ["--list-width" as string]: `${list.width}px` }}>
         <section className="list-pane">
           <div className="pane-head">
-            <span className="label">{selectedAlias ? aliasAddress(selectedAlias) : L("未选别名", "no alias")}</span>
+            <span className="label">{selectedAlias ? aliasAddress(selectedAlias) : L("先选一个地址", "pick an address first")}</span>
             <span className="tag muted">{messages.length}</span>
           </div>
           {selectedAlias && messages.length > 0 && (

@@ -2887,3 +2887,41 @@ h1, h2, h3, .settings-head h3, .detail-head h2, .compose-head h2, .lc-hero h1 {
 .alias-picker .ap-empty {
   padding: 14px 12px; font-size: 12px; color: var(--text-4); text-align: center;
 }
+
+/* 弹层内的滚动区：连接设置 / 转发设置复用 .compose-card 外壳 */
+.modal-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px; }
+.modal-scroll .cf-config,
+.modal-scroll .fwd-panel {
+  background: transparent; border: 0; box-shadow: none; padding: 0; margin: 0;
+}
+.toolbar-icon { width: 30px; height: 30px; display: inline-grid; place-items: center; padding: 0; }
+.toolbar-icon svg { width: 16px; height: 16px; }
+.toolbar-icon.active { background: var(--accent-soft); color: var(--accent-fg); }
+
+/* 转发设置：顶部一句话解释 */
+.fwd-intro { margin: 0 0 14px; padding: 10px 12px; font-size: 12.5px; line-height: 1.6; color: var(--text-2); background: var(--surface-2); border-radius: var(--radius); }
+
+/* rail：「邮箱」项右侧折叠箭头 */
+.nav-fold {
+  margin-left: 6px; flex-shrink: 0; width: 16px; text-align: center;
+  font-size: 10px; color: var(--text-4); cursor: pointer; user-select: none;
+}
+.nav-fold:hover { color: var(--text-2); }
+/* 别名树挂到「邮箱」下面，视觉上从属于它 */
+.nav-mailboxes { margin: 2px 0 10px; }
+
+/* 修：折叠箭头不能再当第 4 个栅格子元素，塞进 count 里 */
+.rail nav button .count { display: inline-flex; align-items: center; gap: 5px; }
+.rail nav button .nav-fold {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; margin: 0; font-size: 9px; line-height: 1;
+  color: var(--text-4); cursor: pointer; border-radius: 4px;
+}
+.rail nav button .nav-fold:hover { color: var(--text); background: var(--surface-3); }
+.rail nav button .nav-fold:focus-visible { outline: none; color: var(--text); background: var(--surface-3); }
+/* rail 导航项聚焦描边收进内侧，避免外扩成大蓝框 */
+.rail nav button:focus-visible {
+  outline: 2px solid var(--accent-fg);
+  outline-offset: -2px;
+  border-radius: var(--radius);
+}

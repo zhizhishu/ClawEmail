@@ -79,6 +79,36 @@ function readInitialView(): View {
   return saved === "inbox" || saved === "mailboxes" ? saved : "mailboxes";
 }
 
+// rail 折叠状态持久化：刷新后保持收起/展开，不会弹回默认
+const NAV_TREE_KEY = "clawemail:nav:tree";
+const NAV_CLAW_KEY = "clawemail:nav:claw";
+const NAV_GROUPS_KEY = "clawemail:nav:groups";
+
+function readFlag(key: string, fallback: boolean): boolean {
+  if (typeof localStorage === "undefined") return fallback;
+  const saved = localStorage.getItem(key);
+  return saved === null ? fallback : saved === "1";
+}
+
+function readFlagMap(key: string): Record<string, boolean> {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeFlag(key: string, value: boolean): void {
+  try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
+}
+
+function writeFlagMap(key: string, value: Record<string, boolean>): void {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* 隐私模式忽略 */ }
+}
+
 export function App() {
   const { t, lang } = usePrefs();
 
@@ -115,10 +145,16 @@ export function App() {
   const [tempProviders, setTempProviders] = useState<TempProviderPublic[]>([]);
   const [cfProvider, setCfProvider] = useState<string | undefined>(undefined);
   const [cfFocusAlias, setCfFocusAlias] = useState<string | undefined>(undefined);
-  const [clawGroupOpen, setClawGroupOpen] = useState(true);
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [clawGroupOpen, setClawGroupOpen] = useState(() => readFlag(NAV_CLAW_KEY, true));
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => readFlagMap(NAV_GROUPS_KEY));
   const [mailboxQuery, setMailboxQuery] = useState("");
+  const [navTreeOpen, setNavTreeOpen] = useState(() => readFlag(NAV_TREE_KEY, true));
   const [mailboxCat, setMailboxCat] = useState<string>("claw");
+
+  // 折叠状态写回 localStorage（三层：整棵树 / Claw 组 / 各 provider 组）
+  useEffect(() => { writeFlag(NAV_TREE_KEY, navTreeOpen); }, [navTreeOpen]);
+  useEffect(() => { writeFlag(NAV_CLAW_KEY, clawGroupOpen); }, [clawGroupOpen]);
+  useEffect(() => { writeFlagMap(NAV_GROUPS_KEY, openGroups); }, [openGroups]);
 
   const [listenerItems, setListenerItems] = useState<ListenerSnapshot[]>([]);
   const [listenerBusy, setListenerBusy] = useState(false);
@@ -725,14 +761,32 @@ export function App() {
           <button className={view === "mailboxes" ? "active" : ""} onClick={() => setView("mailboxes")}>
             <span className="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg></span>
             <span>{t("rail.nav.mailboxes")}</span>
-            <span className="count">{activeMailboxes.length}</span>
+            <span className="count">
+              {activeMailboxes.length}
+              {(activeMailboxes.length > 0 || tempProviders.length > 0) && (
+                <span
+                  className="nav-fold"
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={navTreeOpen}
+                  aria-label={navTreeOpen ? "collapse tree" : "expand tree"}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setNavTreeOpen((v) => !v);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.stopPropagation();
+                      setNavTreeOpen((v) => !v);
+                    }
+                  }}
+                >
+                  {navTreeOpen ? "▾" : "▸"}
+                </span>
+              )}
+            </span>
           </button>
-          <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
-            <span className="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg></span>
-            <span>{lang === "zh" ? "设置" : "Settings"}</span>
-            <span className="count">{tempProviders.length || ""}</span>
-          </button>
-          {(activeMailboxes.length > 0 || tempProviders.length > 0) && (
+          {navTreeOpen && (activeMailboxes.length > 0 || tempProviders.length > 0) && (
             <div className="nav-mailboxes">
               <input
                 className="nav-mb-search"
@@ -800,6 +854,10 @@ export function App() {
               })()}
             </div>
           )}
+          <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
+            <span className="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg></span>
+            <span>{lang === "zh" ? "设置" : "Settings"}</span>
+          </button>
         </nav>
 
         <div className={`conn-card ${clawAuth?.connected ? "connected" : "disconnected"}`}>

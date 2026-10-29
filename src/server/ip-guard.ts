@@ -2,7 +2,7 @@
 // 状态存 app_settings（随 Supabase 持久化，重启不丢）。被封/黑名单的 IP 连页面都打不开。
 import { getSetting, setSetting } from "./db";
 
-export const FAIL_LIMIT = 3;
+export const FAIL_LIMIT = 10;
 
 export type BanEntry = { ip: string; at: number; reason: string };
 

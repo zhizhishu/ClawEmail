@@ -10,6 +10,7 @@
 //          ⚠ cfMint 依赖 new_address 同名幂等刷 jwt；真 canonical admin/new_address 对已存在地址可能非幂等，
 //            待 roastalpha-cf 上线后改走 /admin/show_password/:id 或 /admin/mails?address= 实测校准。
 import type { TempProvider } from "./temp-providers";
+import { fetchIcloudBodies, fetchIcloudBody } from "./icloud-imap";
 import { retryAsync } from "./http-retry";
 import { getSetting, setSetting } from "./db";
 
@@ -28,6 +29,8 @@ export type CfMessageSummary = {
   to: string | null;
   date: string | null;
   preview: string | null;
+  // icloud-hme 引擎解析出的 HTML 正文（验证链接常只在 HTML 里）；其它源走 bodyHtml 字段
+  bodyHtml?: string | null;
   // canonical passthrough：上游有则带出，无则降级（messageId 缺省 undefined、attachments 缺省 []）
   messageId?: string;
   attachments?: Array<{ filename: string; mimeType: string; size: number }>;
@@ -280,13 +283,34 @@ export async function cfListAliases(provider: TempProvider): Promise<CfAlias[]> 
   return data.aliases ?? [];
 }
 
+// 面板直连 IMAP 的账户绑定校验：把 provider.accountId 换成引擎里的邮箱地址，
+// 与面板凭据身份比对，不一致就不兜底（否则两个账号同 UID 会串正文）。
+const icloudAccountEmailCache = new Map<string, { email: string; at: number }>();
+async function icloudAccountEmail(provider: TempProvider): Promise<string | null> {
+  const id = provider.accountId;
+  if (!id) return null;
+  const hit = icloudAccountEmailCache.get(provider.id);
+  if (hit && Date.now() - hit.at < 60_000) return hit.email;
+  try {
+    const raw = await icloudApi<any>(provider, "GET", "/api/accounts");
+    const list: any[] = Array.isArray(raw) ? raw : (raw?.accounts ?? raw?.data?.accounts ?? raw?.data ?? []);
+    const acc = (Array.isArray(list) ? list : []).find((a) => String(a?.id ?? "") === String(id));
+    const email: string | null = acc?.icloud_email ?? acc?.email ?? null;
+    if (email) {
+      icloudAccountEmailCache.set(provider.id, { email, at: Date.now() });
+      return email;
+    }
+  } catch { /* 拿不到身份就退化为不做绑定校验 */ }
+  return null;
+}
+
 export async function cfInbox(provider: TempProvider, alias: string): Promise<CfMessageSummary[]> {
   if (provider.type === "icloud") {
     const accountId = await icloudAccountId(provider);
     // alias 空/缺省 = 整个收件箱（引擎 ListInbox limit/days）；非空才按收件人过滤
     const aliasParam = alias ? `&alias=${encodeURIComponent(alias)}` : "";
     const data = await icloudApi<{
-      messages: Array<{ id: any; from?: string; to?: string; subject?: string; date?: string; preview?: string }> | null;
+      messages: Array<{ id: any; from?: string; to?: string; subject?: string; date?: string; preview?: string; body_html?: string }> | null;
     }>(provider, "GET", `/api/inbox?account_id=${encodeURIComponent(accountId)}${aliasParam}&limit=50`);
     return (data?.messages || []).map((m) => ({
       uid: Number(m.id) || 0,
@@ -295,6 +319,7 @@ export async function cfInbox(provider: TempProvider, alias: string): Promise<Cf
       to: m.to ?? null,
       date: m.date ?? null,
       preview: m.preview ?? null,
+      bodyHtml: m.body_html ?? null,
       messageId: String(m.id)
     }));
   }
@@ -313,9 +338,20 @@ export async function cfInbox(provider: TempProvider, alias: string): Promise<Cf
 // cf：一次 parsed_mails 全量本就含正文，零额外往返；php：摘要切片后逐封补全量。
 export async function cfInboxRich(provider: TempProvider, alias: string, limit: number, offset: number): Promise<CfMessageDetail[]> {
   if (provider.type === "icloud") {
-    // icloud-hme 只给摘要（无正文/html），bodyText 用 preview 兜底，bodyHtml 恒 null
+    // 引擎只给被洗过的 preview（multipart 时常为空）。只有「两个正文都空」才兜底 ——
+    // 否则纯文本邮件（本来就没 HTML）每次读列表都要白连一次 IMAP。
+    // 正文一律以面板直连结果优先，和 cfMessage 保持同一优先级。
     const summaries = (await cfInbox(provider, alias)).slice(offset, offset + limit);
-    return summaries.map((s) => ({ ...s, bodyText: s.preview ?? null, bodyHtml: null }));
+    const blank = (v: string | null | undefined) => !(v ?? "").trim();
+    const need = summaries.filter((s) => blank(s.preview) && blank(s.bodyHtml)).map((s) => Number(s.uid));
+    const fetched =
+      need.length > 0
+        ? await fetchIcloudBodies(need, { expectedEmail: await icloudAccountEmail(provider) })
+        : null;
+    return summaries.map((s) => {
+      const b = fetched?.bodies.get(Number(s.uid));
+      return { ...s, bodyText: b?.text ?? s.preview ?? null, bodyHtml: b?.html ?? s.bodyHtml ?? null };
+    });
   }
   if (provider.type === "cf") {
     const mails = await cfReadParsed(provider, localOf(alias));
@@ -360,10 +396,19 @@ export async function cfSearch(
 
 export async function cfMessage(provider: TempProvider, alias: string, uid: number): Promise<CfMessageDetail> {
   if (provider.type === "icloud") {
-    // icloud-hme 无单封详情口，拉 inbox 找 uid；正文用 preview 兜底
+    // icloud-hme 无单封详情口，拉 inbox 找 uid；正文缺失时用面板直连 IMAP 取原始报文解析
     const s = (await cfInbox(provider, alias)).find((x) => Number(x.uid) === Number(uid));
     if (!s) throw new Error("iCloud HME 未找到该邮件");
-    return { ...s, bodyText: s.preview ?? null, bodyHtml: null, recipientHint: alias };
+    let bodyText = s.preview ?? null;
+    let bodyHtml = s.bodyHtml ?? null;
+    if (!(bodyText ?? "").trim() && !(bodyHtml ?? "").trim()) {
+      const b = await fetchIcloudBody(Number(uid), { expectedEmail: await icloudAccountEmail(provider) });
+      if (b) {
+        bodyText = b.text ?? bodyText;
+        bodyHtml = b.html ?? bodyHtml;
+      }
+    }
+    return { ...s, bodyText, bodyHtml, recipientHint: alias };
   }
   if (provider.type === "cf") {
     const mails = await cfReadParsed(provider, localOf(alias), 100);
