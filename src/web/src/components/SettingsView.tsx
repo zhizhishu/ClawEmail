@@ -27,6 +27,10 @@ export function SettingsView({
   const { lang } = usePrefs();
   const L = (zh: string, en: string) => (lang === "zh" ? zh : en);
 
+  // 设置分区：点目录切内容（不与下一节混在同一滚动流里），并记住折叠状态
+  const [tab, setTab] = useState<"assistant" | "egress" | "secrets" | "access">("assistant");
+  const [navCollapsed, setNavCollapsed] = useState(false);
+
   // ---- AI 助手 ----
   const [ai, setAi] = useState<AiConfigStatus | null>(null);
   const [aiBase, setAiBase] = useState("");
@@ -262,9 +266,38 @@ export function SettingsView({
   }
 
   return (
-    <div className="stagger settings-view">
+    <div
+      className="stagger settings-view settings-split"
+      style={{ gridTemplateColumns: navCollapsed ? "52px minmax(0, 1fr)" : "180px minmax(0, 1fr)" }}
+    >
+      <nav className="settings-nav" aria-label={L("设置分区", "settings sections")} aria-expanded={!navCollapsed}>
+        <button
+          className="settings-nav-toggle"
+          onClick={() => setNavCollapsed((v) => !v)}
+          aria-label={navCollapsed ? L("展开设置目录", "expand settings nav") : L("收起设置目录", "collapse settings nav")}
+        >
+          {navCollapsed ? "»" : "«"}
+        </button>
+        {!navCollapsed &&
+          ([
+            ["assistant", L("助手", "Assistant")],
+            ["egress", L("对外出口", "Egress")],
+            ["secrets", L("密钥", "Secrets")],
+            ["access", L("访问控制", "Access")],
+          ] as const).map(([id, label]) => (
+            <button
+              key={id}
+              className={`settings-nav-item${tab === id ? " is-active" : ""}`}
+              aria-current={tab === id ? "page" : undefined}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+      </nav>
+      <div className="settings-pane">
       {/* ===== AI 助手 ===== */}
-      <div className="settings-card">
+      <div className={`settings-card${tab === "assistant" ? "" : " is-hidden"}`} id="settings-assistant">
         <div className="settings-head">
           <div>
             <h3>{L("AI 助手", "AI assistant")}</h3>
@@ -303,7 +336,7 @@ export function SettingsView({
       </div>
 
       {/* ===== 对外出口（cf 格式 API） ===== */}
-      <div className="settings-card">
+      <div className={`settings-card${tab === "egress" ? "" : " is-hidden"}`} id="settings-egress">
         <div className="settings-head">
           <div>
             <h3>{L("对外出口 · cf 格式 API", "Egress · cf-format API")}</h3>
@@ -362,7 +395,7 @@ export function SettingsView({
       </div>
 
       {/* ===== 凭据·可复制 ===== */}
-      <div className="settings-card">
+      <div className={`settings-card${tab === "secrets" ? "" : " is-hidden"}`} id="settings-secrets">
         <div className="settings-head">
           <div>
             <h3>{L("凭据 · 可复制", "Credentials · copy")}</h3>
@@ -395,7 +428,7 @@ export function SettingsView({
       </div>
 
       {/* ===== 访问控制 · IP ===== */}
-      <div className="settings-card">
+      <div className={`settings-card${tab === "access" ? "" : " is-hidden"}`} id="settings-access">
         <div className="settings-head">
           <div>
             <h3>{L("访问控制 · IP", "Access control · IP")}</h3>
@@ -449,6 +482,7 @@ export function SettingsView({
             </div>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

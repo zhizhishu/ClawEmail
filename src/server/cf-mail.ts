@@ -255,6 +255,96 @@ async function cfAdminList(provider: TempProvider): Promise<CfAlias[]> {
   return out;
 }
 
+// 别名列表缓存：canonical /admin/address 全量返回，edu 这类实例 297 条要 ~30s，
+// 每次开页面都打一次会直接把首屏拖死。这里做 stale-while-revalidate：
+// 有缓存立刻返回旧数据并在后台刷新；没缓存才等上游。
+const CF_ALIAS_TTL_MS = 10 * 60 * 1000;
+const cfAliasCache = new Map<string, { items: CfAlias[]; at: number; refreshing: boolean }>();
+
+// 缓存要落库：HF 容器空闲会休眠重启，纯内存缓存等于没有。
+const CF_ALIAS_STORE_KEY = (id: string) => `cf.aliasCache.${id}`;
+
+function readCfAliasStore(id: string): { items: CfAlias[]; at: number } | null {
+  try {
+    const raw = getSetting(CF_ALIAS_STORE_KEY(id));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { items?: CfAlias[]; at?: number };
+    if (!Array.isArray(parsed.items) || !parsed.at) return null;
+    return { items: parsed.items, at: parsed.at };
+  } catch {
+    return null;
+  }
+}
+
+function writeCfAliasStore(id: string, items: CfAlias[]): void {
+  try {
+    setSetting(CF_ALIAS_STORE_KEY(id), JSON.stringify({ items, at: Date.now() }));
+  } catch { /* 存不下不影响读 */ }
+}
+
+function putCfAliasCache(providerId: string, items: CfAlias[], at: number): void {
+  cfAliasCache.set(providerId, { items, at, refreshing: false });
+  writeCfAliasStore(providerId, items);
+}
+
+function refreshCfAliasCache(provider: TempProvider): void {
+  const cur = cfAliasCache.get(provider.id);
+  if (cur?.refreshing) return;
+  if (cur) cur.refreshing = true;
+  cfAdminList(provider)
+    .then((items) => putCfAliasCache(provider.id, items, Date.now()))
+    .catch(() => {
+      const c = cfAliasCache.get(provider.id);
+      if (c) c.refreshing = false;
+    });
+}
+
+/** 写操作后让缓存失效，下次读会重新拉。 */
+export function invalidateCfAliasCache(providerId?: string): void {
+  if (providerId) {
+    cfAliasCache.delete(providerId);
+    try { setSetting(CF_ALIAS_STORE_KEY(providerId), ""); } catch { /* ignore */ }
+  } else {
+    cfAliasCache.clear();
+  }
+}
+
+async function cfAdminListCached(provider: TempProvider): Promise<CfAlias[]> {
+  let hit = cfAliasCache.get(provider.id);
+  if (!hit) {
+    // 冷启动先看落库的副本 —— 重启后也不至于让首屏再等 30 秒
+    const stored = readCfAliasStore(provider.id);
+    if (stored) {
+      hit = { items: stored.items, at: stored.at, refreshing: false };
+      cfAliasCache.set(provider.id, hit);
+    }
+  }
+  if (hit) {
+    if (Date.now() - hit.at > CF_ALIAS_TTL_MS) refreshCfAliasCache(provider);
+    return hit.items; // 立即返回，不等后台刷新
+  }
+  const items = await cfAdminList(provider);
+  putCfAliasCache(provider.id, items, Date.now());
+  return items;
+}
+
+/**
+ * 代面板转发 iCloud 引擎的登录（HME 别名管理需要 Web 会话，过期就要重新登录）。
+ * 引擎侧：POST /api/accounts/:id/login { password, otpCode? }。
+ * 密码/OTP 只在本进程内存里中转，不落库、不写日志。
+ */
+export async function icloudEngineLogin(
+  provider: TempProvider,
+  password: string,
+  otpCode?: string
+): Promise<unknown> {
+  const accountId = await icloudAccountId(provider);
+  return icloudApi<unknown>(provider, "POST", `/api/accounts/${encodeURIComponent(accountId)}/login`, {
+    password,
+    otpCode: otpCode || undefined
+  });
+}
+
 export async function cfListAliases(provider: TempProvider): Promise<CfAlias[]> {
   if (provider.type === "icloud") {
     const accountId = await icloudAccountId(provider);
@@ -272,10 +362,13 @@ export async function cfListAliases(provider: TempProvider): Promise<CfAlias[]> 
     }));
   }
   if (provider.type === "cf") {
-    // canonical /admin/address 是权威源，全量列；不可用才退回面板本地记账
+    // canonical /admin/address 是权威源，全量列；不可用才退回面板本地记账。
+    // 走缓存：命中立刻返回（旧数据也行），过期由后台异步刷新。
+    const cached = cfAliasCache.get(provider.id);
     try {
-      return await cfAdminList(provider);
+      return await cfAdminListCached(provider);
     } catch {
+      if (cached) return cached.items; // 上游挂了也别让页面空掉
       return cfNames(provider).map((n) => ({ address: fullAddr(provider, n), local: n, createdAt: null }));
     }
   }

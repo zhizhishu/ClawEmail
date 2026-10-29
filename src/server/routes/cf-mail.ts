@@ -3,6 +3,7 @@
 // 旧的 /api/cf/config 仍在，作用于「主 provider」（向后兼容现有 edu 的连接表单）。
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { invalidateCfAliasCache, icloudEngineLogin } from "../cf-mail";
 import { fetchIcloudBodies, icloudImapConfig } from "../icloud-imap";
 import { clearCfConfig, getCfConfigStatus, saveCfConfig } from "../runtime-config";
 import {
@@ -147,7 +148,9 @@ export async function cfMailRoutes(app: FastifyInstance): Promise<void> {
     const body = createAliasSchema.parse(request.body);
     const provider = getProvider(body.provider);
     if (!provider) return reply.code(400).send({ error: "temp-mail provider is not configured" });
-    return cfCreateAlias(provider, body.local.trim().toLowerCase());
+    const created = await cfCreateAlias(provider, body.local.trim().toLowerCase());
+    invalidateCfAliasCache(provider.id);
+    return created;
   });
 
   app.delete("/api/cf/aliases/:local", async (request, reply) => {
@@ -155,10 +158,30 @@ export async function cfMailRoutes(app: FastifyInstance): Promise<void> {
     if (!provider) return reply.code(400).send({ error: "temp-mail provider is not configured" });
     const { local } = request.params as { local: string };
     await cfDeleteAlias(provider, local);
+    invalidateCfAliasCache(provider.id);
     return { success: true };
   });
 
   // iCloud 直连 IMAP 自检：把运行环境里看到的东西如实吐出来（不含任何凭据明文）。
+  // iCloud 引擎登录代理：HME 别名管理走 Web 会话，会话过期(ENGINE_UPSTREAM_UNAUTHORIZED)时用。
+  // 密码与 OTP 只在内存中转，不落库、不回显。
+  app.post("/api/cf/icloud-login", async (request, reply) => {
+    const body = (request.body ?? {}) as { provider?: string; password?: string; otpCode?: string };
+    const provider = getProvider(body.provider ?? "");
+    if (!provider || provider.type !== "icloud") {
+      return reply.code(400).send({ error: "provider is not an icloud source" });
+    }
+    const password = (body.password ?? "").trim() || (process.env.APPLE_ID_PASSWORD ?? "").trim();
+    if (!password) return reply.code(400).send({ error: "password required (body.password or APPLE_ID_PASSWORD)" });
+    try {
+      const r = await icloudEngineLogin(provider, password, body.otpCode?.trim());
+      invalidateCfAliasCache(provider.id);
+      return { success: true, result: r };
+    } catch (e) {
+      return reply.code(400).send({ success: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
   app.get("/api/cf/icloud-imap-selftest", async (request, reply) => {
     const q = request.query as { uid?: string; provider?: string };
     const uid = Number(q.uid ?? 0);

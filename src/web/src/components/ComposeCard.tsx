@@ -1,5 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode, type MouseEvent as RMouseEvent, type KeyboardEvent as RKeyboardEvent } from "react";
+import { Suspense, lazy, useEffect, useRef, useState, type ReactNode, type MouseEvent as RMouseEvent, type KeyboardEvent as RKeyboardEvent } from "react";
 import { sendMail, replyMail, type MailDetail } from "../api";
+import type { RichEditorHandle } from "./RichTextEditor";
+
+// TipTap 约 100KB gzip，懒加载切出首屏主包；富文本模式才会拉这个 chunk
+const RichTextEditor = lazy(() => import("./RichTextEditor").then((m) => ({ default: m.RichTextEditor })));
 import { usePrefs } from "../i18n";
 
 type Mode = "text" | "rich" | "html";
@@ -51,7 +55,7 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null); // 草稿「已保存」时间戳
   const [fmt, setFmt] = useState({ bold: false, italic: false, underline: false, ul: false, ol: false, block: "" });
-  const richRef = useRef<HTMLDivElement>(null);
+  const richRef = useRef<RichEditorHandle>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const saveTimer = useRef<number | null>(null);
 
@@ -93,10 +97,10 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
     if (!restored) { setTo(""); setSubject(""); setMode("text"); setBody(""); setRichHtml(""); }
   }, [open, reply]);
 
-  // 切到富文本时把内容灌进 contentEditable
+  // 切到富文本时把内容灌进编辑器（TipTap 受控：只在外部值变化时 setContent）
   useEffect(() => {
     if (open && mode === "rich" && !preview && richRef.current && richRef.current.innerHTML !== richHtml) {
-      richRef.current.innerHTML = richHtml;
+      richRef.current.setHTML(richHtml);
     }
   }, [open, mode, preview]);
 
@@ -139,20 +143,12 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
   }
 
   function refreshFmt() {
-    try {
-      setFmt({
-        bold: document.queryCommandState("bold"),
-        italic: document.queryCommandState("italic"),
-        underline: document.queryCommandState("underline"),
-        ul: document.queryCommandState("insertUnorderedList"),
-        ol: document.queryCommandState("insertOrderedList"),
-        block: (document.queryCommandValue("formatBlock") || "").toLowerCase()
-      });
-    } catch { /* 某些浏览器 queryCommand 不支持则忽略 */ }
+    const s = richRef.current?.state();
+    if (s) setFmt(s);
   }
   function exec(cmd: string, val?: string) {
     richRef.current?.focus();
-    document.execCommand(cmd, false, val);
+    richRef.current?.run(cmd, val);
     setRichHtml(richRef.current?.innerHTML ?? "");
     refreshFmt();
   }
@@ -218,7 +214,7 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
   function handleClear() {
     if (!confirm(L("清空正文？此操作不可撤销。", "Clear the body? This cannot be undone."))) return;
     setBody(""); setRichHtml("");
-    if (richRef.current) richRef.current.innerHTML = "";
+    if (richRef.current) richRef.current?.setHTML("");
     setSavedAt(null);
     clearDraft();
     refreshFmt();
@@ -328,18 +324,14 @@ export function ComposeCard({ open, fromMailbox, reply, onClose, onSent, onError
           {preview ? (
             <iframe className="compose-preview" title="preview" sandbox="" srcDoc={previewSrc} />
           ) : mode === "rich" ? (
-            <div
-              ref={richRef}
-              className="rt-area"
-              data-placeholder={L("正文…", "Body…")}
-              contentEditable
-              suppressContentEditableWarning
-              onInput={() => setRichHtml(richRef.current?.innerHTML ?? "")}
-              onKeyDown={onRichKeyDown}
-              onKeyUp={refreshFmt}
-              onMouseUp={refreshFmt}
-              onFocus={refreshFmt}
-            />
+            <Suspense fallback={<div className="rt-area rt-loading">{L("载入编辑器…", "loading editor…")}</div>}>
+              <RichTextEditor
+                ref={richRef}
+                initialHTML={richHtml}
+                placeholder={L("正文…", "Body…")}
+                onChange={(html: string) => setRichHtml(html)}
+              />
+            </Suspense>
           ) : (
             <textarea className="compose-text" value={body} onChange={(e) => setBody(e.target.value)} placeholder={mode === "html" ? L("HTML 源码…", "HTML source…") : L("正文…", "Body…")} />
           )}

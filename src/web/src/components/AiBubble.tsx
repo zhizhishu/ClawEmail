@@ -53,6 +53,23 @@ export function AiBubble() {
   const [showSettings, setShowSettings] = useState(false);
   const [config, setConfig] = useState<AiConfigStatus | null>(null);
   const [messages, setMessages] = useState<DisplayMsg[]>([]);
+  // 多对话（Notion 式：可新建、可切换、可删除），落 localStorage
+  type Conv = { id: string; at: number; messages: DisplayMsg[] };
+  const CONV_KEY = "clawemail:ai:convs";
+  const loadConvs = (): { active: string; list: Conv[] } => {
+    try {
+      const raw = localStorage.getItem(CONV_KEY);
+      if (raw) {
+        const p = JSON.parse(raw) as { active?: string; list?: Conv[] };
+        if (Array.isArray(p.list) && p.list.length > 0) return { active: p.active || p.list[0].id, list: p.list };
+      }
+    } catch { /* ignore */ }
+    const id = String(Date.now());
+    return { active: id, list: [{ id, at: Date.now(), messages: [] }] };
+  };
+  const convInit = loadConvs();
+  const [convs, setConvs] = useState<Conv[]>(convInit.list);
+  const [activeConv, setActiveConv] = useState<string>(convInit.active);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -82,7 +99,7 @@ export function AiBubble() {
       setConfig(c);
       setBaseUrl(c.baseUrl);
       setModel(c.model);
-      if (!c.configured) setShowSettings(true);
+      if (!c.configured) setError(T("助手未配置：去「设置 → 助手」填 Base URL / 模型 / API Key", "Assistant not configured — set it in Settings → Assistant"));
     } catch {
       /* ignore */
     }
@@ -176,6 +193,39 @@ export function AiBubble() {
     T("搜一下含「验证码」的邮件", "Search mail for 'code'")
   ];
 
+  // 切换会话时先标记，避免「加载」被「保存」覆盖
+  const switchingRef = useRef(false);
+
+  useEffect(() => {
+    if (switchingRef.current) { switchingRef.current = false; return; }
+    setConvs((cur) => {
+      const next = cur.map((c) => (c.id === activeConv ? { ...c, messages, at: Date.now() } : c));
+      try { localStorage.setItem(CONV_KEY, JSON.stringify({ active: activeConv, list: next })); } catch { /* ignore */ }
+      return next;
+    });
+  }, [messages, activeConv]);
+
+  useEffect(() => {
+    switchingRef.current = true;
+    const c = convs.find((x) => x.id === activeConv);
+    setMessages(c?.messages ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConv]);
+
+  function newConv() {
+    const id = String(Date.now());
+    setConvs((cur) => [{ id, at: Date.now(), messages: [] }, ...cur]);
+    setActiveConv(id);
+    setError("");
+  }
+
+  function deleteConv() {
+    if (convs.length <= 1) return;
+    const rest = convs.filter((c) => c.id !== activeConv);
+    setConvs(rest);
+    setActiveConv(rest[0].id);
+  }
+
   return (
     <>
       {!open && (
@@ -198,6 +248,24 @@ export function AiBubble() {
               </span>
             </div>
             <div className="ai-head-actions">
+              <select
+                className="ai-conv-select"
+                value={activeConv}
+                onChange={(e) => setActiveConv(e.target.value)}
+                title={T("切换对话", "Switch chat")}
+              >
+                {convs.map((c, i) => (
+                  <option value={c.id} key={c.id}>
+                    {c.messages.length > 0
+                      ? `${T("对话", "Chat")} ${convs.length - i}`
+                      : `${T("新对话", "New")} ${convs.length - i}`}
+                  </option>
+                ))}
+              </select>
+              <button className="ai-icon-btn" title={T("新对话", "New chat")} onClick={newConv}>+</button>
+              <button className="ai-icon-btn" title={T("删除当前对话", "Delete chat")} onClick={deleteConv} disabled={convs.length <= 1}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
+              </button>
               <button className="ai-icon-btn" title={T("设置", "Settings")} onClick={() => setShowSettings((s) => !s)}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.14.31.43.54.78.66H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
               </button>

@@ -274,14 +274,16 @@ export function App() {
   // load each temp source's aliases into a per-provider map (for the sidebar groups)
   useEffect(() => {
     let alive = true;
-    Promise.all(
-      tempProviders.map((p) =>
-        fetchCfAliases(p.id)
-          .then((a) => [p.id, a] as const)
-          .catch(() => [p.id, [] as CfAlias[]] as const)
-      )
-    ).then((entries) => {
-      if (alive) setCfAliasesByProvider(Object.fromEntries(entries));
+    // 逐源并发拉，谁先回来先渲染 —— 别用 Promise.all 等最慢的那个
+    // （edu 全量别名 297 条约 30s，等它会把整个侧栏卡住）
+    tempProviders.forEach((p) => {
+      fetchCfAliases(p.id)
+        .then((a) => {
+          if (alive) setCfAliasesByProvider((cur) => ({ ...cur, [p.id]: a }));
+        })
+        .catch(() => {
+          if (alive) setCfAliasesByProvider((cur) => ({ ...cur, [p.id]: [] as CfAlias[] }));
+        });
     });
     return () => {
       alive = false;
@@ -758,31 +760,21 @@ export function App() {
             <span className="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg></span>
             <span>{t("rail.nav.sent")}</span>
           </button>
-          <button className={view === "mailboxes" ? "active" : ""} onClick={() => setView("mailboxes")}>
+          <button
+            className={view === "mailboxes" ? "active" : ""}
+            aria-expanded={activeMailboxes.length > 0 || tempProviders.length > 0 ? navTreeOpen : undefined}
+            onClick={() => {
+              setView("mailboxes");
+              // 整行就是折叠开关：小箭头太小，用户点不到、也看不懂
+              if (activeMailboxes.length > 0 || tempProviders.length > 0) setNavTreeOpen((v) => !v);
+            }}
+          >
             <span className="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg></span>
             <span>{t("rail.nav.mailboxes")}</span>
             <span className="count">
               {activeMailboxes.length}
               {(activeMailboxes.length > 0 || tempProviders.length > 0) && (
-                <span
-                  className="nav-fold"
-                  role="button"
-                  tabIndex={0}
-                  aria-expanded={navTreeOpen}
-                  aria-label={navTreeOpen ? "collapse tree" : "expand tree"}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setNavTreeOpen((v) => !v);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.stopPropagation();
-                      setNavTreeOpen((v) => !v);
-                    }
-                  }}
-                >
-                  {navTreeOpen ? "▾" : "▸"}
-                </span>
+                <span className="nav-fold" aria-hidden="true">{navTreeOpen ? "▾" : "▸"}</span>
               )}
             </span>
           </button>
