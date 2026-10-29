@@ -141,23 +141,53 @@ function proxyUrl(): string {
   return (process.env.ICLOUD_IMAP_SOCKS || process.env.SOCKS_PROXY || "").trim();
 }
 
+let lastError: string | null = null;
+
+// SOCKS 代理串格式不统一（可能是 socks5://u:p@h:p、h:p:u:p、不带 scheme 等），
+// 手写容错解析，别让 new URL 一失败就整条链路放弃。
+type ProxyParts = { host: string; port: number; user?: string; pass?: string };
+function parseProxy(raw: string): ProxyParts | null {
+  const text = raw.trim();
+  if (!text) return null;
+  const body = text.replace(/^[a-z0-9+]+:\/\//i, "");
+  const at = body.lastIndexOf("@");
+  let creds = "";
+  let hostPort = body;
+  if (at >= 0) {
+    creds = body.slice(0, at);
+    hostPort = body.slice(at + 1);
+  }
+  const hp = hostPort.split(":", 2);
+  const host = (hp[0] || "").trim();
+  const port = Number(hp[1] || 1080);
+  if (!host || !Number.isFinite(port)) return null;
+  let user: string | undefined;
+  let pass: string | undefined;
+  if (creds) {
+    const ci = creds.indexOf(":");
+    user = ci >= 0 ? decodeURIComponent(creds.slice(0, ci)) : decodeURIComponent(creds);
+    pass = ci >= 0 ? decodeURIComponent(creds.slice(ci + 1)) : undefined;
+  }
+  return { host, port, user, pass };
+}
+
 async function ensureRelay(): Promise<number | null> {
   const raw = proxyUrl();
   if (!raw) return null;
   if (relayPort) return relayPort;
-  let proxy: URL;
-  try { proxy = new URL(raw); } catch { return null; }
+  const proxy = parseProxy(raw);
+  if (!proxy) { lastError = `代理串无法解析（长度 ${raw.length}）`; return null; }
   const targetHost = process.env.ICLOUD_IMAP_HOST || "imap.mail.me.com";
   const targetPort = Number(process.env.ICLOUD_IMAP_PORT || 993);
 
   const server = net.createServer((client) => {
     SocksClient.createConnection({
       proxy: {
-        host: proxy.hostname,
-        port: Number(proxy.port) || 1080,
+        host: proxy.host,
+        port: proxy.port,
         type: 5,
-        userId: proxy.username ? decodeURIComponent(proxy.username) : undefined,
-        password: proxy.password ? decodeURIComponent(proxy.password) : undefined
+        userId: proxy.user,
+        password: proxy.pass
       },
       command: "connect",
       destination: { host: targetHost, port: targetPort }
@@ -294,6 +324,7 @@ export async function fetchIcloudBodies(uids: number[], options: FetchOptions = 
       const status: IcloudBodyStatus = /auth|login|credentials|invalid/i.test(message)
         ? "auth_failed"
         : "unavailable";
+      lastError = message;
       console.warn("[icloud-imap] 取正文失败:", message);
       for (const uid of todo) if (!bodies.has(uid)) localFailed.set(uid, status);
       return { bodies, localFailed, status, reason: message };
@@ -304,7 +335,7 @@ export async function fetchIcloudBodies(uids: number[], options: FetchOptions = 
   });
 
   for (const [uid, why] of result.localFailed) failed.set(uid, why);
-  return { bodies: result.bodies, status: result.status, failed, reason: undefined };
+  return { bodies: result.bodies, status: result.status, failed, reason: lastError ?? undefined };
 }
 
 /** 自检：面板在运行环境里到底看到了什么（不回传任何凭据明文）。 */
@@ -321,7 +352,8 @@ export function icloudImapConfig() {
     host: process.env.ICLOUD_IMAP_HOST || "imap.mail.me.com",
     port: Number(process.env.ICLOUD_IMAP_PORT || 993),
     connectTimeoutMs: CONNECT_TIMEOUT_MS,
-    cacheEntries: cache.size
+    cacheEntries: cache.size,
+    lastError
   };
 }
 
