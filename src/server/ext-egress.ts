@@ -156,8 +156,6 @@ export type ExtMail = {
   raw: string;
   from_address: string;
   to_address: string;
-  // 收件人别名：部分第三方客户端只认 to/recipient，不认 to_address
-  to?: string;
   subject: string;
   message: string;
   html: string | null;
@@ -182,8 +180,6 @@ export async function extReadMails(p: AddrPayload, limit: number, offset: number
         raw: header ? `${header}\n\n${text}` : text,
         from_address: m.from?.[0] ?? "",
         to_address: m.to?.[0] ?? p.a,
-        // 兼容第三方客户端：有的只认 to/recipient，不认 to_address
-        to: m.to?.[0] ?? p.a,
         subject: m.subject ?? "",
         message: text || (m.html?.content ?? ""),
         html: m.html?.content ?? null,
@@ -206,8 +202,6 @@ export async function extReadMails(p: AddrPayload, limit: number, offset: number
     raw: m.bodyHtml ?? m.bodyText ?? "",
     from_address: m.from ?? "",
     to_address: m.to ?? p.a,
-    // 兼容第三方客户端：有的只认 to/recipient，不认 to_address
-    to: m.to ?? p.a,
     subject: m.subject ?? "",
     message: m.bodyText ?? m.preview ?? "",
     html: m.bodyHtml ?? null,
