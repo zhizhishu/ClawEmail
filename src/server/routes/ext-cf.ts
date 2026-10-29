@@ -90,11 +90,11 @@ export async function extCfRoutes(app: FastifyInstance): Promise<void> {
 
   const createHandler = (needAdmin: boolean) => async (req: FastifyRequest, reply: FastifyReply) => {
     if (needAdmin ? !adminGate(req, reply) : !siteGate(req, reply)) return;
-    const body = (req.body ?? {}) as { name?: string; domain?: string };
+    const body = (req.body ?? {}) as { name?: string; domain?: string; enablePrefix?: boolean };
     const domain = body.domain?.trim() || allDomains()[0];
     if (!domain) return reply.code(400).send({ error: "domain required (no domain configured)" });
     try {
-      const r = await extCreateAddress(body.name, domain);
+      const r = await extCreateAddress(body.name, domain, body.enablePrefix === true);
       // canonical 建址响应：{jwt, address, password, address_id}（password 本实现不设地址密码，恒 null）
       return { jwt: r.jwt, address: r.address, password: null, address_id: r.address_id };
     } catch (e) {

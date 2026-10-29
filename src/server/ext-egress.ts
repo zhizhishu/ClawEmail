@@ -127,10 +127,14 @@ export function allDomains(): string[] {
 // ---------- 建址：按域名分流到 claw 或临时 provider ----------
 export async function extCreateAddress(
   name: string | undefined,
-  domain: string
+  domain: string,
+  enablePrefix = false
 ): Promise<{ address: string; jwt: string; address_id: number }> {
   const d = domain.trim().toLowerCase();
-  const local = name && name.trim() ? name.trim().toLowerCase() : randomLocal();
+  const base = name && name.trim() ? name.trim().toLowerCase() : randomLocal();
+  // canonical 的 enablePrefix=true 表示"再加一段随机前缀"，让地址不可猜。
+  // claw 的建址名有严格规则，故只在临时源上生效。
+  const local = enablePrefix ? `${randomBytes(3).toString("hex")}${base}` : base;
 
   const cd = clawDomain();
   if (cd && d === cd.toLowerCase()) {
@@ -152,6 +156,8 @@ export type ExtMail = {
   raw: string;
   from_address: string;
   to_address: string;
+  // 收件人别名：部分第三方客户端只认 to/recipient，不认 to_address
+  to?: string;
   subject: string;
   message: string;
   html: string | null;
@@ -176,6 +182,8 @@ export async function extReadMails(p: AddrPayload, limit: number, offset: number
         raw: header ? `${header}\n\n${text}` : text,
         from_address: m.from?.[0] ?? "",
         to_address: m.to?.[0] ?? p.a,
+        // 兼容第三方客户端：有的只认 to/recipient，不认 to_address
+        to: m.to?.[0] ?? p.a,
         subject: m.subject ?? "",
         message: text || (m.html?.content ?? ""),
         html: m.html?.content ?? null,
@@ -198,6 +206,8 @@ export async function extReadMails(p: AddrPayload, limit: number, offset: number
     raw: m.bodyHtml ?? m.bodyText ?? "",
     from_address: m.from ?? "",
     to_address: m.to ?? p.a,
+    // 兼容第三方客户端：有的只认 to/recipient，不认 to_address
+    to: m.to ?? p.a,
     subject: m.subject ?? "",
     message: m.bodyText ?? m.preview ?? "",
     html: m.bodyHtml ?? null,
