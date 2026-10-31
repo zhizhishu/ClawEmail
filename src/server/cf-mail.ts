@@ -398,6 +398,37 @@ async function icloudAccountEmail(provider: TempProvider): Promise<string | null
   return null;
 }
 
+// ---------- iCloud 收件箱摘要缓存：只给「读单封」用，列表/轮询永远走实时 ----------
+// 摘要是引擎刚给的事实（UID 在同一信箱里不复用），短 TTL 只是防内存无限涨。
+const ICLOUD_SUMMARY_TTL_MS = 2 * 60 * 1000;
+const ICLOUD_SUMMARY_MAX = 500;
+const icloudSummaries = new Map<string, Map<number, { s: CfMessageSummary; at: number }>>();
+
+function rememberIcloudSummaries(providerId: string, list: CfMessageSummary[]): void {
+  let byUid = icloudSummaries.get(providerId);
+  if (!byUid) icloudSummaries.set(providerId, (byUid = new Map()));
+  const now = Date.now();
+  for (const s of list) {
+    if (!s.uid) continue;
+    byUid.delete(s.uid); // 重新插入 = 移到最新，便于按插入序淘汰
+    byUid.set(s.uid, { s, at: now });
+  }
+  while (byUid.size > ICLOUD_SUMMARY_MAX) {
+    const oldest = byUid.keys().next().value;
+    if (oldest === undefined) break;
+    byUid.delete(oldest);
+  }
+}
+
+/** 命中条件与引擎按 alias 过滤等价：指定了 alias 时，收件人必须包含它。 */
+function recalledIcloudSummary(providerId: string, alias: string, uid: number): CfMessageSummary | null {
+  const hit = icloudSummaries.get(providerId)?.get(Number(uid));
+  if (!hit || Date.now() - hit.at > ICLOUD_SUMMARY_TTL_MS) return null;
+  const want = (alias || "").trim().toLowerCase();
+  if (want && !(hit.s.to ?? "").toLowerCase().includes(want)) return null;
+  return hit.s;
+}
+
 export async function cfInbox(provider: TempProvider, alias: string): Promise<CfMessageSummary[]> {
   if (provider.type === "icloud") {
     const accountId = await icloudAccountId(provider);
@@ -406,7 +437,7 @@ export async function cfInbox(provider: TempProvider, alias: string): Promise<Cf
     const data = await icloudApi<{
       messages: Array<{ id: any; from?: string; to?: string; subject?: string; date?: string; preview?: string; body_html?: string }> | null;
     }>(provider, "GET", `/api/inbox?account_id=${encodeURIComponent(accountId)}${aliasParam}&limit=50`);
-    return (data?.messages || []).map((m) => ({
+    const list = (data?.messages || []).map((m) => ({
       uid: Number(m.id) || 0,
       subject: m.subject ?? null,
       from: m.from ?? null,
@@ -416,6 +447,8 @@ export async function cfInbox(provider: TempProvider, alias: string): Promise<Cf
       bodyHtml: m.body_html ?? null,
       messageId: String(m.id)
     }));
+    rememberIcloudSummaries(provider.id, list);
+    return list;
   }
   if (provider.type === "cf") {
     const local = localOf(alias);
@@ -490,8 +523,11 @@ export async function cfSearch(
 
 export async function cfMessage(provider: TempProvider, alias: string, uid: number): Promise<CfMessageDetail> {
   if (provider.type === "icloud") {
-    // icloud-hme 无单封详情口，拉 inbox 找 uid；正文缺失时用面板直连 IMAP 取原始报文解析
-    const s = (await cfInbox(provider, alias)).find((x) => Number(x.uid) === Number(uid));
+    // icloud-hme 无单封详情口，只能拉 inbox 找 uid（2~7s）。刚列过的信先查摘要缓存，命中就省掉这一趟；
+    // 正文缺失时用面板直连 IMAP 取原始报文解析
+    const s =
+      recalledIcloudSummary(provider.id, alias, uid) ??
+      (await cfInbox(provider, alias)).find((x) => Number(x.uid) === Number(uid));
     if (!s) throw new Error("iCloud HME 未找到该邮件");
     let bodyText = s.preview ?? null;
     let bodyHtml = s.bodyHtml ?? null;
