@@ -108,7 +108,6 @@ export function MailboxesView({
         <div className="mb-table">
           <div className="mb-row head">
             <span>{t("mb.head.mailbox")}</span>
-            <span>{t("mb.head.status")}</span>
             <span>{t("mb.head.rules")}</span>
             <span>{t("mb.head.created")}</span>
             <span style={{ textAlign: "right" }}>{t("mb.head.ops")}</span>
@@ -121,12 +120,6 @@ export function MailboxesView({
                   {isPrimary(mailbox)
                     ? t("mb.row.primary")
                     : t("mb.row.prefix", { p: mailbox.prefix })}
-                </span>
-              </div>
-              <div>
-                <span className={`tag ${mailbox.status === "active" ? "ok" : "muted"}`}>
-                  <span className={`dot ${mailbox.status === "active" ? "live" : ""}`} />
-                  {mailbox.status}
                 </span>
               </div>
               <div>
@@ -144,13 +137,14 @@ export function MailboxesView({
                 >
                   {t("mb.row.rules")}
                 </button>
-                <button
-                  className="danger"
-                  onClick={() => onDelete(mailbox)}
-                  disabled={isPrimary(mailbox)}
-                >
-                  {t("mb.row.delete")}
-                </button>
+                {!isPrimary(mailbox) && (
+                  <button
+                    className="ghost row-del"
+                    onClick={() => onDelete(mailbox)}
+                  >
+                    {t("mb.row.delete")}
+                  </button>
+                )}
               </div>
             </div>
           ))}

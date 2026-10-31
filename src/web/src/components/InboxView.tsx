@@ -4,6 +4,7 @@ import { useResizableWidth } from "../hooks";
 import { plural, usePrefs } from "../i18n";
 import { parseMailTime, parseServerTime } from "../time";
 import { wrapEmailHtml } from "../email-html";
+import { CodeReadout } from "./CodeReadout";
 import { SearchBox } from "./SearchBox";
 
 type Props = {
@@ -184,7 +185,7 @@ export function InboxView({
                   {lang === "zh" ? "回复" : "Reply"}
                 </button>
                 <button
-                  className="danger detail-delete"
+                  className="ghost detail-delete"
                   onClick={handleDeleteMail}
                   disabled={deleteBusy}
                 >
@@ -200,6 +201,12 @@ export function InboxView({
                 <dt>{t("inbox.detail.at")}</dt>
                 <dd className="mono">{fmtFull(time.value, time.source)}</dd>
               </dl>
+              <CodeReadout
+                subject={selectedMail.subject}
+                text={selectedMail.text}
+                html={selectedMail.html}
+                lang={lang}
+              />
             </div>
 
             <div className="detail-body">

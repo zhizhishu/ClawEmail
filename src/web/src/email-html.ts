@@ -7,15 +7,15 @@ export function wrapEmailHtml(html: string): string {
   html,body{margin:0}
   body{
     padding:24px 28px;
-    font-family:"Nunito","PingFang SC","Microsoft YaHei",-apple-system,system-ui,"Segoe UI",sans-serif;
-    font-size:14.5px; line-height:1.75; color:#283142;
-    background:#ecf0f6; /* 柔纸底，不刺眼纯白 */
+    font-family:"Inter","PingFang SC","Microsoft YaHei",-apple-system,system-ui,"Segoe UI",sans-serif;
+    font-size:14.5px; line-height:1.75; color:#1F1F1D;
+    background:#FAF9F6; /* 暖白纸，配 Rams 机身 */
     word-break:break-word; overflow-wrap:anywhere;
   }
-  img{max-width:100%;height:auto;border-radius:10px}
-  a{color:#3a72b8;text-decoration:underline;text-underline-offset:2px}
-  blockquote{margin:10px 0;padding:4px 0 4px 14px;border-left:3px solid #c9d2e0;color:#5b6675}
+  img{max-width:100%;height:auto;border-radius:4px}
+  a{color:#A8400A;text-decoration:underline;text-underline-offset:2px}
+  blockquote{margin:10px 0;padding:4px 0 4px 14px;border-left:3px solid #D6D3CC;color:#4A4945}
   p{margin:0 0 12px} pre{white-space:pre-wrap;word-break:break-word}
-  table{max-width:100%} hr{border:none;border-top:1px solid #e2e7f0;margin:16px 0}
+  table{max-width:100%} hr{border:none;border-top:1px solid #D6D3CC;margin:16px 0}
 </style></head><body>${html}</body></html>`;
 }

@@ -24,6 +24,7 @@ import {
 } from "../api";
 import { useResizableWidth } from "../hooks";
 import { usePrefs } from "../i18n";
+import { CodeReadout } from "./CodeReadout";
 import { SearchBox } from "./SearchBox";
 
 type Props = {
@@ -118,6 +119,7 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
   useEffect(() => {
     setSelectedAlias("");
     setSelected(null);
+    setAliases([]); // 切来源时清掉上一个来源的地址，免得计数/列表串台
     fetchCfStatus(providerId)
       .then((s) => {
         setConfigured(s.configured);
@@ -472,19 +474,7 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
         className="cf-toolbar"
         style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", margin: "0 0 12px" }}
       >
-        {providers.length > 1 && (
-          <select
-            value={providerId ?? providers[0]?.id ?? ""}
-            onChange={(e) => setProviderId(e.target.value || undefined)}
-            title={L("临时邮箱源", "Temp-mail source")}
-          >
-            {providers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}{p.domain ? ` · ${p.domain}` : ""}
-              </option>
-            ))}
-          </select>
-        )}
+        {/* 来源切换已在侧栏「来源」，这里不再重复一个下拉 */}
         <AliasPicker
           aliases={aliases}
           value={selectedAlias}
@@ -523,11 +513,12 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
           </svg>
         </button>
         {selectedAlias && (
-          <button className="danger" onClick={() => handleDeleteAlias(selectedAlias)}>
+          <button className="ghost cf-del" onClick={() => handleDeleteAlias(selectedAlias)}>
             {L("删除此别名", "Delete alias")}
           </button>
         )}
         <span style={{ flex: 1 }} />
+        <span className="cf-create">
         <input
           value={newLocal}
           onChange={(e) => setNewLocal(e.target.value.replace(/[^a-z0-9]/gi, "").toLowerCase())}
@@ -537,10 +528,11 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
           }}
           style={{ width: 140 }}
         />
-        <span style={{ color: "var(--text-4)" }}>@{domain || "…"}</span>
+        <span className="cf-domain mono">@{domain || "…"}</span>
         <button onClick={handleCreate} disabled={!newLocal.trim()}>
-          {L("创建 →", "Create →")}
+          {L("创建", "Create")}
         </button>
+        </span>
       </div>
 
       {composeOpen && (
@@ -801,7 +793,7 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
                 </svg>
               </div>
               {L("选择一封邮件查看", "Pick a message")}
-              <small>{L("edu.002836.xyz 别名", "edu.002836.xyz alias")}</small>
+              <small>{domain ? `@${domain}` : ""}</small>
             </div>
           )}
           {selected && (
@@ -821,6 +813,12 @@ export function CfMailView({ onError, onStatus, focusAlias, provider }: Props) {
                   <dt>{L("时间", "At")}</dt>
                   <dd className="mono">{selected.date || "—"}</dd>
                 </dl>
+                <CodeReadout
+                  subject={selected.subject}
+                  text={selected.bodyText || selected.preview}
+                  html={selected.bodyHtml}
+                  lang={lang}
+                />
               </div>
               <div className="detail-body">
                 {selected.bodyHtml ? (

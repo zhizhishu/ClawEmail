@@ -351,7 +351,7 @@ export function ProviderManageCard({
         </div>
         <span className="hint">{L("catch-all 直收，未预建也能收信", "catch-all receives without pre-creation")}</span>
         <button className="primary" onClick={createAddress} disabled={aliasBusy || !newLocal.trim()}>
-          {aliasBusy ? L("建址中…", "…") : L("建址 →", "Create →")}
+          {aliasBusy ? L("建址中…", "…") : L("建址", "Create")}
         </button>
       </div>
 

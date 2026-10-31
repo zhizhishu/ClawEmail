@@ -26,7 +26,7 @@ const EN: Dict = {
   "login.field.password": "admin password",
   "login.placeholder.password": "enter ADMIN_PASSWORD",
   "login.btn.verifying": "verifying…",
-  "login.btn.enter": "enter →",
+  "login.btn.enter": "enter",
   "login.error.unauthorized": "incorrect admin password",
 
   // views
@@ -82,7 +82,7 @@ const EN: Dict = {
   "conn.action.disconnect": "disconnect",
   "conn.action.showDetails": "details",
   "conn.action.hideDetails": "hide",
-  "conn.action.diagnostics": "diagnostics →",
+  "conn.action.diagnostics": "diagnostics",
   "conn.lis.label": "listeners",
   "conn.lis.running": "{n} / {total} live",
   "conn.lis.errors": "{n} errors",
@@ -91,14 +91,14 @@ const EN: Dict = {
   "conn.input.code": "verification code",
   "conn.action.sendCode": "send code",
   "conn.action.resendCode": "resend code",
-  "conn.action.bind": "bind →",
+  "conn.action.bind": "bind",
 
   "rail.admin": "admin",
   "rail.logout": "logout",
 
   // toolbar
   "toolbar.selectMailbox": "— all mailboxes —",
-  "toolbar.compose": "compose →",
+  "toolbar.compose": "compose",
   "toolbar.sync": "sync",
   "toolbar.syncing": "syncing",
   "toolbar.syncHint": "Sync mailbox list from Claw",
@@ -173,7 +173,7 @@ const EN: Dict = {
   "mb.suffix": "suffix",
   "mb.placeholder.suffix": "example",
   "mb.hint": "a–z, 0–9 · max 32",
-  "mb.create": "create →",
+  "mb.create": "create",
   "mb.empty.head": "no mailboxes yet.",
   "mb.empty.body":
     "Bind Claw to sync, or use the form above to forge a sub-mailbox.",
@@ -255,7 +255,7 @@ const ZH: Dict = {
   "login.field.password": "管理密码",
   "login.placeholder.password": "请输入 ADMIN_PASSWORD",
   "login.btn.verifying": "核验中…",
-  "login.btn.enter": "进入 →",
+  "login.btn.enter": "进入",
   "login.error.unauthorized": "管理密码错误",
 
   "view.mailboxes.eyebrow": "操作 · 邮箱",
@@ -308,7 +308,7 @@ const ZH: Dict = {
   "conn.action.disconnect": "断开",
   "conn.action.showDetails": "详情",
   "conn.action.hideDetails": "收起",
-  "conn.action.diagnostics": "诊断 →",
+  "conn.action.diagnostics": "诊断",
   "conn.lis.label": "监听器",
   "conn.lis.running": "监听中 {n} / {total}",
   "conn.lis.errors": "异常 {n}",
@@ -317,13 +317,13 @@ const ZH: Dict = {
   "conn.input.code": "验证码",
   "conn.action.sendCode": "发送验证码",
   "conn.action.resendCode": "重新发送",
-  "conn.action.bind": "绑定 →",
+  "conn.action.bind": "绑定",
 
   "rail.admin": "管理员",
   "rail.logout": "退出",
 
   "toolbar.selectMailbox": "— 全部邮箱 —",
-  "toolbar.compose": "写信 →",
+  "toolbar.compose": "写信",
   "toolbar.sync": "同步",
   "toolbar.syncing": "同步中",
   "toolbar.syncHint": "从 Claw 重新同步邮箱列表",
@@ -393,7 +393,7 @@ const ZH: Dict = {
   "mb.suffix": "后缀",
   "mb.placeholder.suffix": "example",
   "mb.hint": "a–z, 0–9 · 最多 32 位",
-  "mb.create": "创建 →",
+  "mb.create": "创建",
   "mb.empty.head": "暂无子邮箱。",
   "mb.empty.body": "绑定 Claw 后将自动同步，亦可使用上方表单手动创建。",
   "mb.head.mailbox": "邮箱",
@@ -485,10 +485,7 @@ function readLang(): Lang {
 }
 
 function readTheme(): Theme {
-  // 默认亮色（白）：登录页与内页统一，符合用户偏好；用户切过暗色则记住。
-  if (typeof localStorage === "undefined") return "light";
-  const saved = localStorage.getItem("theme");
-  if (saved === "light" || saved === "dark") return saved;
+  // 只做浅色（用户硬要求，2026-10-31）：忽略历史上存过的 dark。
   return "light";
 }
 
@@ -509,9 +506,9 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
   }, [lang]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.style.colorScheme = theme;
-    localStorage.setItem("theme", theme);
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.colorScheme = "light";
+    try { localStorage.setItem("theme", "light"); } catch { /* 隐私模式忽略 */ }
   }, [theme]);
 
   function setLang(next: Lang) {
@@ -530,7 +527,7 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
     toggleLang: () => setLang(lang === "en" ? "zh" : "en"),
     theme,
     setTheme: setThemeState,
-    toggleTheme: () => setThemeState(theme === "dark" ? "light" : "dark"),
+    toggleTheme: () => setThemeState("light"),
     t
   };
 
@@ -552,39 +549,10 @@ export function plural(
   return t(key, { n });
 }
 
-type IconName = "sun" | "moon";
-function Icon({ name }: { name: IconName }) {
-  if (name === "sun") {
-    return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="4" />
-        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-      </svg>
-    );
-  }
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-    </svg>
-  );
-}
-
 export function PrefsBar({ variant = "rail" }: { variant?: "rail" | "login" }) {
-  const { theme, toggleTheme, lang, toggleLang, t } = usePrefs();
-  const themeTitle =
-    theme === "dark" ? t("pref.theme.toggleToLight") : t("pref.theme.toggleToDark");
+  const { lang, toggleLang, t } = usePrefs();
   return (
     <div className={`prefs-bar prefs-bar-${variant}`}>
-      <button
-        type="button"
-        className="pref-btn"
-        onClick={toggleTheme}
-        title={themeTitle}
-        aria-label={themeTitle}
-      >
-        <Icon name={theme === "dark" ? "moon" : "sun"} />
-        <span className="pref-text">{theme === "dark" ? t("pref.theme.dark") : t("pref.theme.light")}</span>
-      </button>
       <button
         type="button"
         className={`pref-btn lang-pill lang-${lang}`}

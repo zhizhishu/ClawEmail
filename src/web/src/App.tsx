@@ -79,36 +79,6 @@ function readInitialView(): View {
   return saved === "inbox" || saved === "mailboxes" ? saved : "mailboxes";
 }
 
-// rail 折叠状态持久化：刷新后保持收起/展开，不会弹回默认
-const NAV_TREE_KEY = "clawemail:nav:tree";
-const NAV_CLAW_KEY = "clawemail:nav:claw";
-const NAV_GROUPS_KEY = "clawemail:nav:groups";
-
-function readFlag(key: string, fallback: boolean): boolean {
-  if (typeof localStorage === "undefined") return fallback;
-  const saved = localStorage.getItem(key);
-  return saved === null ? fallback : saved === "1";
-}
-
-function readFlagMap(key: string): Record<string, boolean> {
-  if (typeof localStorage === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(key);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, boolean>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeFlag(key: string, value: boolean): void {
-  try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* 隐私模式忽略 */ }
-}
-
-function writeFlagMap(key: string, value: Record<string, boolean>): void {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* 隐私模式忽略 */ }
-}
-
 export function App() {
   const { t, lang } = usePrefs();
 
@@ -145,16 +115,9 @@ export function App() {
   const [tempProviders, setTempProviders] = useState<TempProviderPublic[]>([]);
   const [cfProvider, setCfProvider] = useState<string | undefined>(undefined);
   const [cfFocusAlias, setCfFocusAlias] = useState<string | undefined>(undefined);
-  const [clawGroupOpen, setClawGroupOpen] = useState(() => readFlag(NAV_CLAW_KEY, true));
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => readFlagMap(NAV_GROUPS_KEY));
-  const [mailboxQuery, setMailboxQuery] = useState("");
-  const [navTreeOpen, setNavTreeOpen] = useState(() => readFlag(NAV_TREE_KEY, true));
   const [mailboxCat, setMailboxCat] = useState<string>("claw");
 
   // 折叠状态写回 localStorage（三层：整棵树 / Claw 组 / 各 provider 组）
-  useEffect(() => { writeFlag(NAV_TREE_KEY, navTreeOpen); }, [navTreeOpen]);
-  useEffect(() => { writeFlag(NAV_CLAW_KEY, clawGroupOpen); }, [clawGroupOpen]);
-  useEffect(() => { writeFlagMap(NAV_GROUPS_KEY, openGroups); }, [openGroups]);
 
   const [listenerItems, setListenerItems] = useState<ListenerSnapshot[]>([]);
   const [listenerBusy, setListenerBusy] = useState(false);
@@ -760,95 +723,42 @@ export function App() {
             <span className="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg></span>
             <span>{t("rail.nav.sent")}</span>
           </button>
-          <button
-            className={view === "mailboxes" ? "active" : ""}
-            aria-expanded={activeMailboxes.length > 0 || tempProviders.length > 0 ? navTreeOpen : undefined}
-            onClick={() => {
-              setView("mailboxes");
-              // 整行就是折叠开关：小箭头太小，用户点不到、也看不懂
-              if (activeMailboxes.length > 0 || tempProviders.length > 0) setNavTreeOpen((v) => !v);
-            }}
-          >
+          <button className={view === "mailboxes" ? "active" : ""} onClick={() => setView("mailboxes")}>
             <span className="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg></span>
-            <span>{t("rail.nav.mailboxes")}</span>
-            <span className="count">
-              {activeMailboxes.length}
-              {(activeMailboxes.length > 0 || tempProviders.length > 0) && (
-                <span className="nav-fold" aria-hidden="true">{navTreeOpen ? "▾" : "▸"}</span>
-              )}
-            </span>
+            <span>{lang === "zh" ? "管理邮箱" : "Manage"}</span>
           </button>
-          {navTreeOpen && (activeMailboxes.length > 0 || tempProviders.length > 0) && (
-            <div className="nav-mailboxes">
-              <input
-                className="nav-mb-search"
-                value={mailboxQuery}
-                onChange={(event) => setMailboxQuery(event.target.value.toLowerCase())}
-                placeholder={lang === "zh" ? "搜索邮箱…" : "Search mailboxes…"}
-              />
-              {(() => {
-                const q = mailboxQuery.trim();
-                const claws = activeMailboxes.filter((m) => m.email.split("@")[0].toLowerCase().includes(q));
-                return (
-                  <>
-                    {claws.length > 0 && (
-                      <div className="nav-group">
-                        <button className="nav-group-head" type="button" onClick={() => setClawGroupOpen((o) => !o)}>
-                          <span className="nav-group-chevron">{clawGroupOpen ? "▾" : "▸"}</span>
-                          <span className="nav-group-name">Claw</span>
-                          <span className="nav-group-count">{claws.length}</span>
-                        </button>
-                        {clawGroupOpen && claws.map((mailbox) => (
-                          <button
-                            key={mailbox.id}
-                            className={`nav-sub ${view === "inbox" && selectedMailbox === mailbox.email ? "active" : ""}`}
-                            onClick={() => { setSelectedMailbox(mailbox.email); setView("inbox"); }}
-                            title={mailbox.email}
-                          >
-                            <span className="nav-sub-dot" />
-                            <span className="nav-sub-name">{mailbox.email.split("@")[0]}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {tempProviders.map((p) => {
-                      const aliases = (cfAliasesByProvider[p.id] ?? []).filter((a) => a.local.toLowerCase().includes(q));
-                      if (q && aliases.length === 0) return null;
-                      const open = openGroups[p.id] ?? true;
-                      return (
-                        <div className="nav-group" key={p.id}>
-                          <button
-                            className="nav-group-head"
-                            type="button"
-                            onClick={() => setOpenGroups((g) => ({ ...g, [p.id]: !(g[p.id] ?? true) }))}
-                          >
-                            <span className="nav-group-chevron">{open ? "▾" : "▸"}</span>
-                            <span className="nav-group-name">{p.name}</span>
-                            <span className="nav-group-count">{aliases.length}</span>
-                          </button>
-                          {open &&
-                            aliases.map((alias) => (
-                              <button
-                                key={alias.local}
-                                className={`nav-sub ${view === "cf" && cfProvider === p.id && cfFocusAlias === alias.local ? "active" : ""}`}
-                                onClick={() => { setCfProvider(p.id); setCfFocusAlias(alias.local); setView("cf"); }}
-                                title={alias.address}
-                              >
-                                <span className="nav-sub-dot edu" />
-                                <span className="nav-sub-name">{alias.local}</span>
-                              </button>
-                            ))}
-                        </div>
-                      );
-                    })}
-                  </>
-                );
-              })()}
-            </div>
-          )}
+
+          {/* 来源：一行一个来源 + 计数，不再把几百个地址逐条列进导航 */}
+          <div className="eyebrow nav-eyebrow nav-src-head">{lang === "zh" ? "来源" : "Sources"}</div>
+          <button
+            className={`nav-src ${(view === "inbox" && selectedMailbox) || (view === "mailboxes" && mailboxCat === "claw") ? "active" : ""}`}
+            onClick={() => { setMailboxCat("claw"); setView("mailboxes"); }}
+            title={clawAuth?.domain ?? "claw.163.com"}
+          >
+            <span className={`src-lamp ${clawAuth?.connected ? "on" : ""}`} aria-hidden="true" />
+            <span className="src-name">{lang === "zh" ? "Claw 子邮箱" : "Claw"}</span>
+            <span className="count">{activeMailboxes.length}</span>
+          </button>
+          {tempProviders.map((p) => (
+            <button
+              key={p.id}
+              className={`nav-src ${(view === "cf" && cfProvider === p.id) || (view === "mailboxes" && mailboxCat === p.id) ? "active" : ""}`}
+              onClick={() => { setCfProvider(p.id); setCfFocusAlias(undefined); setView("cf"); }}
+              title={p.domain || p.name}
+            >
+              <span className="src-lamp on" aria-hidden="true" />
+              <span className="src-name">{p.name}</span>
+              <span className="count">{(cfAliasesByProvider[p.id] ?? []).length}</span>
+            </button>
+          ))}
+          <div className="nav-spacer" />
           <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
             <span className="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg></span>
             <span>{lang === "zh" ? "设置" : "Settings"}</span>
+          </button>
+          <button className="nav-docs" onClick={() => setDocsOpen(true)}>
+            <span className="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /><path d="M13 3v5h5" /><path d="M8 13h8" /><path d="M8 17h6" /></svg></span>
+            <span>{lang === "zh" ? "API 文档" : "API docs"}</span>
           </button>
         </nav>
 
@@ -1132,11 +1042,6 @@ export function App() {
         onRefresh={loadListeners}
       />
 
-      <button className="docs-fab" title={lang === "zh" ? "API 调用文档" : "API docs"} aria-label="API docs" onClick={() => setDocsOpen(true)}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M4 5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /><path d="M13 3v5h5" /><path d="M8 13h8" /><path d="M8 17h6" />
-        </svg>
-      </button>
       <DocsModal open={docsOpen} onClose={() => setDocsOpen(false)} onError={reportError} onStatus={(m) => setStatus(m)} />
 
       <AiBubble />
