@@ -44,6 +44,8 @@ const OVERALL_TIMEOUT_MS = Number(process.env.ICLOUD_IMAP_TIMEOUT_MS || 15000);
 const MAX_SOURCE_BYTES = Number(process.env.ICLOUD_IMAP_MAX_BYTES || 8 * 1024 * 1024);
 const CACHE_TTL_MS = Number(process.env.ICLOUD_IMAP_CACHE_TTL_MS || 10 * 60 * 1000);
 const CACHE_MAX_ENTRIES = 300;
+/** 长连接空闲多久后主动退出（0 = 关闭连接池，每次请求新建连接）。 */
+const POOL_IDLE_MS = Number(process.env.ICLOUD_IMAP_POOL_IDLE_MS ?? 60_000);
 
 type Creds = { user: string; pass: string };
 
@@ -212,7 +214,9 @@ function newClient(c: Creds, viaRelayPort: number | null): ImapFlow {
     auth: { user: c.user, pass: c.pass },
     logger: false as const,
     greetingTimeout: CONNECT_TIMEOUT_MS,
-    socketTimeout: OVERALL_TIMEOUT_MS
+    // 长连接要在池里空闲 POOL_IDLE_MS，socket 空闲超时必须比它长，否则会被提前掐断。
+    // 单次操作的超时由 withTimeout 兜，不靠这个。
+    socketTimeout: POOL_IDLE_MS + 30_000
   };
   if (viaRelayPort) {
     // 经本地 SOCKS 中继：连 127.0.0.1，但 SNI 仍与真实主机名握手，证书校验照旧
@@ -228,6 +232,60 @@ function newClient(c: Creds, viaRelayPort: number | null): ImapFlow {
     host,
     port: Number(process.env.ICLOUD_IMAP_PORT || 993)
   });
+}
+
+// ---------- 长连接池：每账号一条，跳过重复的 TCP/TLS/LOGIN ----------
+// 调用方都在 withAccountLock 里，同一账号同一时刻只有一个使用者，无需再加锁。
+type Pooled = { client: ImapFlow; idle: NodeJS.Timeout | null; dead: boolean };
+const pool = new Map<string, Pooled>();
+
+function dropPooled(key: string, p: Pooled): void {
+  p.dead = true;
+  if (p.idle) clearTimeout(p.idle);
+  if (pool.get(key) === p) pool.delete(key);
+  p.client.logout().catch(() => p.client.close());
+}
+
+/** 取一条可用连接；reused=true 表示复用了池里的旧连接。 */
+async function acquireClient(c: Creds): Promise<{ p: Pooled; reused: boolean }> {
+  const key = c.user.toLowerCase();
+  const cur = pool.get(key);
+  if (cur && !cur.dead && cur.client.usable) {
+    if (cur.idle) clearTimeout(cur.idle);
+    cur.idle = null;
+    return { p: cur, reused: true };
+  }
+  if (cur) dropPooled(key, cur);
+
+  const client = newClient(c, await ensureRelay());
+  const p: Pooled = { client, idle: null, dead: false };
+  // 服务器断开或报错时立刻出池；error 必须有监听，否则会变成未捕获异常
+  client.on("error", () => { p.dead = true; if (pool.get(key) === p) pool.delete(key); });
+  client.on("close", () => { p.dead = true; if (pool.get(key) === p) pool.delete(key); });
+  try {
+    await withTimeout(client.connect(), CONNECT_TIMEOUT_MS, "IMAP 连接");
+  } catch (e) {
+    dropPooled(key, p);
+    throw e;
+  }
+  if (POOL_IDLE_MS > 0) pool.set(key, p);
+  return { p, reused: false };
+}
+
+/** 用完归还：ok=false（出过错/超时）直接丢弃，别把半死的连接留给下一个请求。 */
+function releaseClient(c: Creds, p: Pooled, ok: boolean): void {
+  const key = c.user.toLowerCase();
+  if (!ok || p.dead || POOL_IDLE_MS <= 0 || !p.client.usable) {
+    dropPooled(key, p);
+    return;
+  }
+  p.idle = setTimeout(() => dropPooled(key, p), POOL_IDLE_MS);
+  p.idle.unref?.();
+}
+
+/** 进程退出 / 改凭据时关掉所有长连接。 */
+export function closeIcloudImapPool(): void {
+  for (const [key, p] of pool) dropPooled(key, p);
 }
 
 function pick(parsed: { text?: string | null; html?: unknown }): IcloudBody {
@@ -284,35 +342,59 @@ export async function fetchIcloudBodies(uids: number[], options: FetchOptions = 
     }
     if (todo.length === 0) return { bodies, localFailed, status: "ok" as IcloudBodyStatus };
 
-    const client = newClient(c, await ensureRelay());
-    let lock: { release: () => void } | null = null;
+    // 在一条连接上取完 todo 里还没拿到的 UID
+    const runOn = async (client: ImapFlow, reused: boolean) => {
+      // 复用的连接先 NOOP：既探活，也让服务器推送新邮件的 EXISTS，避免看不到刚到的信
+      if (reused) await withTimeout(client.noop(), 5000, "IMAP 探活");
+      const lock = await withTimeout(client.getMailboxLock("INBOX"), CONNECT_TIMEOUT_MS, "IMAP 选箱");
+      try {
+        const pending = todo.filter((uid) => !bodies.has(uid) && !localFailed.has(uid));
+        if (pending.length === 0) return;
+        const work = (async () => {
+          for await (const msg of client.fetch(pending.join(","), { source: true, size: true }, { uid: true })) {
+            const uid = Number(msg.uid);
+            const size = Number((msg as { size?: number }).size ?? 0);
+            if (size > MAX_SOURCE_BYTES) {
+              localFailed.set(uid, "too_large");
+              continue;
+            }
+            if (!msg?.source) {
+              localFailed.set(uid, "unavailable");
+              continue;
+            }
+            try {
+              const body = pick(await simpleParser(msg.source));
+              bodies.set(uid, body);
+              cacheSet(c.user, uid, body);
+            } catch {
+              localFailed.set(uid, "unavailable");
+            }
+          }
+        })();
+        await withTimeout(work, OVERALL_TIMEOUT_MS, "IMAP 读信");
+      } finally {
+        try { lock.release(); } catch { /* ignore */ }
+      }
+    };
+
     try {
-      await withTimeout(client.connect(), CONNECT_TIMEOUT_MS, "IMAP 连接");
-
-      lock = await client.getMailboxLock("INBOX");
-      const work = (async () => {
-        for await (const msg of client.fetch(todo.join(","), { source: true, size: true }, { uid: true })) {
-          const uid = Number(msg.uid);
-          const size = Number((msg as { size?: number }).size ?? 0);
-          if (size > MAX_SOURCE_BYTES) {
-            localFailed.set(uid, "too_large");
-            continue;
-          }
-          if (!msg?.source) {
-            localFailed.set(uid, "unavailable");
-            continue;
-          }
-          try {
-            const body = pick(await simpleParser(msg.source));
-            bodies.set(uid, body);
-            cacheSet(c.user, uid, body);
-          } catch {
-            localFailed.set(uid, "unavailable");
-          }
+      let { p, reused } = await acquireClient(c);
+      try {
+        await runOn(p.client, reused);
+        releaseClient(c, p, true);
+      } catch (error) {
+        releaseClient(c, p, false);
+        // 只有「复用的旧连接」失败才换新连接再试一次；新连接失败就是真失败
+        if (!reused) throw error;
+        ({ p, reused } = await acquireClient(c));
+        try {
+          await runOn(p.client, false);
+          releaseClient(c, p, true);
+        } catch (retryError) {
+          releaseClient(c, p, false);
+          throw retryError;
         }
-      })();
-
-      await withTimeout(work, OVERALL_TIMEOUT_MS, "IMAP 读信");
+      }
 
       for (const uid of todo) {
         if (!bodies.has(uid) && !localFailed.has(uid)) localFailed.set(uid, "unavailable");
@@ -328,9 +410,6 @@ export async function fetchIcloudBodies(uids: number[], options: FetchOptions = 
       console.warn("[icloud-imap] 取正文失败:", message);
       for (const uid of todo) if (!bodies.has(uid)) localFailed.set(uid, status);
       return { bodies, localFailed, status, reason: message };
-    } finally {
-      try { lock?.release(); } catch { /* ignore */ }
-      try { await withTimeout(client.logout(), 3000, "IMAP 退出"); } catch { /* ignore */ }
     }
   });
 
